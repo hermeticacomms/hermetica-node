@@ -1,0 +1,127 @@
+import { z } from 'zod';
+import { Channel, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+
+export const ExperimentKind = z.enum(['message_variant', 'path_split', 'holdout', 'send_time']);
+export const ExperimentMethod = z.enum(['bayesian_beta', 'frequentist_ztest']);
+/** Opens are accepted but flagged unreliable (Apple MPP, prefetch). */
+export const PrimaryMetric = z.enum(['clicks', 'replies', 'conversions', 'revenue', 'opens']);
+export type PrimaryMetric = z.infer<typeof PrimaryMetric>;
+export const GuardrailMetric = z.enum(['unsubscribe', 'complaint', 'bounce']);
+export type GuardrailMetric = z.infer<typeof GuardrailMetric>;
+
+export const VariantWeight = z.object({ key: z.string().min(1).max(32), weight: z.number().int().min(0).max(1000) });
+export type VariantWeight = z.infer<typeof VariantWeight>;
+
+export const ExperimentMetricSpec = z.object({
+  primary: PrimaryMetric.default('clicks'),
+  /** Absolute increase in the rate (vs control) that counts as harm, e.g. 0.002 = +0.2 percentage points. */
+  guardrails: z.array(z.object({ metric: GuardrailMetric, threshold: z.number().min(0).max(1) })).max(3).default([]),
+});
+export type ExperimentMetricSpec = z.infer<typeof ExperimentMetricSpec>;
+
+export const AutoSelect = z.object({
+  enabled: z.boolean().default(false),
+  afterHours: z.number().int().min(1).max(24 * 30).default(4),
+  pBest: z.number().min(0.5).max(0.999).default(0.95),
+  /** End the test at this moment even without a clear winner: the variant that is ahead wins. */
+  stopAt: z.iso.datetime({ offset: true }).optional(),
+  /** While running, send more of the new traffic to the variants that look better (each keeps a share to keep learning). */
+  shift: z.boolean().optional(),
+});
+export type AutoSelect = z.infer<typeof AutoSelect>;
+
+export const CreateExperimentBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  kind: ExperimentKind.default('message_variant'),
+  scopeType: z.enum(['campaign', 'workflow', 'form', 'workspace']),
+  scopeId: Id.nullish(),
+  key: z.string().max(64).default(''),
+  variants: z.array(VariantWeight).min(2).max(10),
+  control: z.string().max(32).optional(),
+  metric: ExperimentMetricSpec.default({ primary: 'clicks', guardrails: [] }),
+  method: ExperimentMethod.default('bayesian_beta'),
+  autoSelect: AutoSelect.nullish(),
+  minRecipients: z.number().int().min(1).max(1_000_000).default(100),
+  minConversions: z.number().int().min(1).max(1_000_000).default(20),
+});
+export type CreateExperimentBody = z.input<typeof CreateExperimentBody>;
+
+export const GuardrailResult = z.object({ metric: GuardrailMetric, rate: z.number(), pWorse: z.number().nullable(), failed: z.boolean() });
+export const ReportArm = z.object({
+  key: z.string(),
+  n: z.number().int(),
+  conversions: z.number().int(),
+  rate: z.number(),
+  ci: z.tuple([z.number(), z.number()]),
+  pBest: z.number(),
+  expectedLoss: z.number(),
+  pValue: z.number().nullable(),
+  guardrails: z.array(GuardrailResult),
+  /** Attributed orders and revenue (minor units) for this variant, whatever the test is measured by. */
+  orders: z.number().int().optional(),
+  revenueMinor: z.number().optional(),
+});
+export const ExperimentReport = z.object({
+  arms: z.array(ReportArm),
+  recommendation: z.object({ kind: z.enum(['winner', 'keep_running', 'no_winner']), key: z.string().nullable() }),
+  reason: z.string(),
+  method: ExperimentMethod,
+  metric: PrimaryMetric,
+  /** True only when the decision rule is met; the UI must not say "significant" otherwise. */
+  significant: z.boolean(),
+  sampleSufficient: z.boolean(),
+  /** Set when the metric is approximate (opens). */
+  caveat: z.string().nullable(),
+});
+export type ExperimentReport = z.infer<typeof ExperimentReport>;
+
+const Row = z.looseObject({ id: Id });
+export const ExperimentDto = Row;
+export const ExperimentPage = pageResult(ExperimentDto);
+export const ExperimentListQuery = PageQuery.extend({ status: z.enum(['draft', 'running', 'concluded']).optional(), scopeId: Id.optional() });
+export const ConcludeBody = z.object({ winnerKey: z.string().min(1).max(32) });
+
+export const HoldoutScope = z.enum(['workspace', 'campaign', 'workflow']);
+export const HoldoutBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  percent: z.number().min(0).max(50),
+  scopeType: HoldoutScope.default('workspace'),
+  scopeId: Id.nullish(),
+});
+export const HoldoutDto = Row;
+export const HoldoutPage = pageResult(HoldoutDto);
+
+/** Frequency caps (T6.3). `windowHours` instead of ms so the API stays human-sized. */
+export const FrequencyCapInput = z.object({
+  channel: Channel,
+  purpose: Purpose,
+  max: z.number().int().min(1).max(1000),
+  windowHours: z.number().int().min(1).max(24 * 30),
+});
+export type FrequencyCapInput = z.infer<typeof FrequencyCapInput>;
+export const SmartSending = z.object({ hours: z.number().int().min(1).max(24 * 14), action: z.enum(['defer', 'skip']).default('skip') });
+export type SmartSending = z.infer<typeof SmartSending>;
+export const FrequencySettingsBody = z.object({
+  scopeType: z.enum(['workspace', 'campaign', 'workflow']).default('workspace'),
+  scopeId: Id.nullish(),
+  caps: z.array(FrequencyCapInput).max(20).default([]),
+  smartSending: SmartSending.nullish(),
+});
+export const FrequencySettingsDto = Row;
+export const FrequencySettingsList = z.object({ items: z.array(FrequencySettingsDto) });
+
+export const SendTimeRecommendation = z.object({ profileId: Id, hour: z.number().int().min(0).max(23), source: z.enum(['profile', 'workspace', 'default']), at: Timestamp });
+export const ResendBody = z.object({
+  to: z.enum(['non_openers', 'non_clickers']),
+  subject: z.string().trim().min(1).max(998),
+  at: z.coerce.date().optional(),
+});
+export const AbTestConfig = z.object({
+  testPercent: z.number().int().min(1).max(50).default(20),
+  metric: PrimaryMetric.default('clicks'),
+  waitHours: z.number().int().min(1).max(48).default(4),
+  auto: z.boolean().default(true),
+  method: ExperimentMethod.default('bayesian_beta'),
+});
+export type AbTestConfig = z.infer<typeof AbTestConfig>;
+export const RolloutBody = z.object({ winnerKey: z.string().min(1).max(32).optional() });
