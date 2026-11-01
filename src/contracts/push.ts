@@ -16,10 +16,13 @@ export type PushBackground = z.infer<typeof PushBackground>;
 const lower = <T extends z.ZodType>(e: T) => z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() : v), e);
 const upper = <T extends z.ZodType>(e: T) => z.preprocess((v) => (typeof v === 'string' ? v.toUpperCase() : v), e);
 const str = (n = 200) => z.string().max(n).optional();
+/** Klaviyo's SDKs (and ours) send device environment as debug/release; the API also takes sandbox/production. */
+const DEVICE_ENV: Record<string, PushEnvironment> = { debug: 'sandbox', release: 'production' };
+const deviceEnv = z.preprocess((v) => (typeof v === 'string' ? DEVICE_ENV[v.toLowerCase()] ?? v.toLowerCase() : v), PushEnvironment);
 
 export const PushDeviceMetadata = z.looseObject({
   device_id: str(), klaviyo_sdk: str(), sdk_version: str(), device_model: str(), os_name: str(), os_version: str(),
-  app_name: str(), app_version: str(), app_build: str(), app_id: str(), environment: lower(PushEnvironment).optional(),
+  app_name: str(), app_version: str(), app_build: str(), app_id: str(), environment: deviceEnv.optional(),
 });
 export type PushDeviceMetadata = z.infer<typeof PushDeviceMetadata>;
 
@@ -53,7 +56,7 @@ export type ClientPushTokenBody = z.infer<typeof ClientPushTokenBody>;
 /** POST /client/push-token-unregister: same envelope, only token + vendor + profile matter. */
 export const ClientPushUnregisterBody = z.object({
   data: z.object({
-    type: z.literal('push-token-unregister').optional(),
+    type: z.enum(['push-token-unregister', 'push-token']).optional(), // older SDK builds sent push-token
     attributes: z.object({ token: z.string().min(1).max(4096), platform: lower(PushPlatform).optional(), vendor: lower(PushVendor), profile: PushProfileRef.optional() }),
   }),
 });
