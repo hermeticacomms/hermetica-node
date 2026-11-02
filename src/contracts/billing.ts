@@ -25,3 +25,6 @@ export const SetPlanBody = z.object({ planId: z.string().min(1).max(40), limitOv
 export const UrlBody = z.object({ returnUrl: z.url().max(2048) });
 export const CheckoutBody = z.object({ planId: z.string().min(1).max(40), successUrl: z.url().max(2048), cancelUrl: z.url().max(2048) });
 export const UrlResult = z.object({ url: z.string() });
+/** The caller's own link in Hermetica's referral program (Referalli). `enabled: false` = the program is not configured here. */
+/** `percent`/`months` come from the program's published rule (null when Referalli did not answer), so the copy cannot drift from it. */
+export const MyReferralDto = z.object({ enabled: z.boolean(), code: z.string().nullable(), link: z.string().nullable(), percent: z.number().nullable(), months: z.number().int().nullable() });

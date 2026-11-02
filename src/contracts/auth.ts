@@ -5,24 +5,10 @@ export const Role = z.enum(['owner', 'admin', 'marketer', 'sales', 'analyst', 'v
 export const ApiKeyKind = z.enum(['secret', 'site']);
 const Hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
-export const SignupBody = z.object({
-  email: z.email().max(254),
-  password: z.string().min(10).max(200),
-  name: z.string().min(1).max(120),
-  workspaceName: z.string().min(1).max(120),
-  timezone: z.string().max(64).optional(),
-  /** Optional token for the operator's sign-up check provider (card setup, device fingerprint). */
-  checkEvidence: z.string().max(500).optional(),
-});
-export const AuthForgotBody = z.object({ email: z.email().max(254) });
-export const AuthResetBody = z.object({ token: z.string().min(10).max(200), password: SignupBody.shape.password });
-export const AuthChangePasswordBody = z.object({ current: z.string().min(1).max(200), password: SignupBody.shape.password });
 export const MemberListsBody = z.object({ listIds: z.array(z.uuid()).max(500).nullable() });
 export const SignupDomainRulesDto = z.object({ allow: z.array(z.string().max(255)).max(500), block: z.array(z.string().max(255)).max(500) });
-export const LoginBody = z.object({ email: z.email().max(254), password: z.string().min(1).max(200), totp: z.string().max(32).optional() });
-export const TotpCodeBody = z.object({ code: z.string().min(6).max(32) });
 
-export const UserDto = z.object({ id: Id, email: z.string(), name: z.string(), mfaEnabled: z.boolean(), avatarUrl: z.string().nullable().optional(), emailVerified: z.boolean().optional() });
+export const UserDto = z.object({ id: Id, email: z.string(), name: z.string(), avatarUrl: z.string().nullable().optional(), emailVerified: z.boolean().optional() });
 export const MeProfileBody = z.object({ name: z.string().trim().min(1).max(120).optional(), avatarUrl: z.url({ protocol: /^https$/ }).max(500).nullable().optional() });
 export const WorkspaceDto = z.object({
   id: Id,
@@ -59,15 +45,16 @@ export const WorkspacePatch = z.object({
   industry: z.enum(INDUSTRIES).nullable().optional(),
 });
 
-export const AuthResult = z.object({ user: UserDto, workspace: WorkspaceDto.nullable(), mfaRequired: z.boolean(), expiresAt: Timestamp.nullable() });
+/** Dev-only sign-in (AUTH_DEV_LOGIN, never production): tests and local dev without Atlas. */
+export const DevLoginBody = z.object({ email: z.email().max(254), name: z.string().min(1).max(120).optional() });
+export const AuthResult = z.object({ user: UserDto, workspace: WorkspaceDto.nullable(), expiresAt: Timestamp.nullable() });
+export const LogoutResult = z.object({ ok: z.literal(true), /** Atlas end-session URL the browser should visit next (null without Atlas). */ redirectTo: z.string().nullable() });
 export const MeResult = z.object({
   actor: z.object({ type: z.string(), id: z.string(), workspaceId: Id, role: Role.optional(), scopes: z.array(z.string()) }),
   user: UserDto.nullable(),
   workspaces: z.array(z.object({ id: Id, name: z.string(), role: Role })),
   /** Set while an owner is viewing the app as this user. */
   impersonatedBy: z.object({ id: Id, name: z.string() }).nullable().optional(),
-  /** The account must confirm its email before it can act (it holds no scope until then). */
-  verificationRequired: z.boolean().optional(),
   /** Platform operator (PLATFORM_OPERATOR_EMAILS): the operator console is open to them. */
   operator: z.boolean().optional(),
 });
@@ -125,3 +112,7 @@ export const AuditDto = z.object({
 export const AuditFilter = z.object({ action: z.string().optional(), targetType: z.string().optional(), from: Timestamp.optional(), to: Timestamp.optional() });
 export const AuditExportQuery = AuditFilter.extend({ format: z.enum(['csv', 'ndjson']).default('csv'), order: z.enum(['asc', 'desc']).default('desc') });
 export const AuditExport = z.object({ filename: z.string(), format: z.enum(['csv', 'ndjson']), rowCount: z.number().int(), truncated: z.boolean(), content: z.string() });
+
+/** Company sign-on through the workspace's Atlas organization. */
+export const SsoStatusDto = z.object({ available: z.boolean(), configured: z.boolean(), connections: z.array(z.object({ id: z.string(), type: z.string(), status: z.string() })) });
+export const SsoSetupLinkDto = z.object({ url: z.url(), expiresAt: z.string().nullable() });
