@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { Channel, Id, Purpose } from './common.ts';
-import { PushExtras } from './push.ts';
+import { Channel, Id, Purpose, ReplyToList } from './common.ts';
+import { PropertyCondition } from './metrics.ts';
+import { PushExtras, PushPlatform } from './push.ts';
 import { SegmentDefinition } from './segments.ts';
 
 export const NodeId = z.string().min(1).max(64);
@@ -27,6 +28,8 @@ export const Condition = z.discriminatedUnion('kind', [
   /** Weekday (1 = Monday .. 7 = Sunday) and/or time-of-day window in `tz` (default: the flow zone). Window may wrap midnight. */
   z.object({ kind: z.literal('time'), weekdays: z.array(z.number().int().min(1).max(7)).optional(), startMin: z.number().int().min(0).max(1440).optional(), endMin: z.number().int().min(0).max(1440).optional(), tz: z.string().max(64).optional() }),
   /** Compare a date (profile field, trigger path or var) with now: before/after/today, within N days either way, or an anniversary (month and day) within N days. */
+  /** The contact has at least one push device that can receive (a valid token with notifications allowed), optionally on one platform. */
+  z.object({ kind: z.literal('push_token'), platform: PushPlatform.optional() }),
   z.object({
     kind: z.literal('date'), source: z.enum(['field', 'trigger', 'var']).default('field'), path: z.string().min(1).max(128),
     op: z.enum(['before', 'after', 'today', 'within_next_days', 'within_past_days', 'anniversary_within_days']), days: z.number().int().min(0).max(3660).default(0),
@@ -49,6 +52,13 @@ const Send = {
   skipIfMessagedWithinHours: z.number().int().min(1).max(24 * 30).optional(),
   /** Additional message filter: people who do not match skip just this message and carry on. Same conditions as the segment builder. */
   filter: SegmentDefinition.optional(),
+  /** Retry a send that errors (render failure, provider refusal) up to this many times, 5 min apart and doubling, before `skipOnFailure` or failing. */
+  retries: z.number().int().min(0).max(5).optional(),
+  /** Send from this verified sender of the route instead of its default. */
+  senderIdentityId: Id.optional(),
+  replyTo: ReplyToList.optional(),
+  /** Transactional / operational only: add RFC 8058 one-click unsubscribe headers. Marketing and prospecting always carry them. */
+  oneClickUnsubscribe: z.boolean().optional(),
 };
 const Empty = z.object({}).default({});
 /** What reaching a goal means: an event (with property filter) or a segment definition. */
@@ -62,6 +72,8 @@ const Notify = z.object({
   to: z.object({
     userIds: z.array(Id).max(20).default([]), emails: z.array(z.email()).max(20).default([]),
     slackWebhookUrl: z.url().optional(), webhookUrl: z.url().optional(),
+    /** Discord channel webhook (https://discord.com/api/webhooks/...). */
+    discordWebhookUrl: z.url().regex(/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\//).optional(),
   }).default({ userIds: [], emails: [] }),
   params: z.record(z.string(), z.unknown()).default({}),
 }).default({ to: { userIds: [], emails: [] }, params: {} });
@@ -71,8 +83,9 @@ const Weight = z.number().int().min(0).max(1000);
 const Hours = z.object({ startMin: z.number().int().min(0).max(1440), endMin: z.number().int().min(0).max(1440), weekdays: z.array(z.number().int().min(1).max(7)).optional(), tz: z.string().optional(), onClosed: z.enum(['wait', 'exit']).optional() });
 const Action = z.object({ title: z.string().max(200).optional(), params: z.record(z.string(), z.unknown()).default({}) }).default({ params: {} });
 
+/** `name`: the step's display name on the canvas (the type's label when empty). */
 const node = <T extends string, C extends z.ZodType>(type: T, config: C) =>
-  z.object({ id: NodeId, type: z.literal(type), config, position: Pos });
+  z.object({ id: NodeId, type: z.literal(type), config, position: Pos, name: z.string().trim().max(80).optional() });
 
 export const WorkflowNode = z.discriminatedUnion('type', [
   // messaging
@@ -90,7 +103,10 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     /** Saved call (Settings > Webhooks > Call templates): its url, method, headers, body and secrets are the defaults; fields set here win. */
     webhookTemplateId: Id.optional(),
     url: z.url().optional(),
-    method: z.enum(['POST', 'PUT', 'PATCH', 'DELETE', 'GET']).optional(),
+    method: z.enum(['POST', 'PUT', 'PATCH', 'DELETE', 'GET', 'HEAD', 'OPTIONS']).optional(),
+    /** How the body is sent: JSON (default), form-encoded fields of `body`, or `rawBody` as plain text or XML (liquid, so `{{ profile.email }}` works). */
+    bodyFormat: z.enum(['json', 'form', 'text', 'xml']).default('json'),
+    rawBody: z.string().max(100_000).optional(),
     /** Extra headers whose values come from named integration secrets (Settings > Integrations), opened at send time. */
     authHeaders: z.array(z.object({ header: z.string().regex(/^[A-Za-z0-9-]{1,64}$/), secretName: z.string().min(1).max(100), prefix: z.string().max(40).optional() })).max(10).optional(),
     body: z.record(z.string(), z.unknown()).optional(), headers: z.record(z.string(), z.string()).optional(),
@@ -171,10 +187,11 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   node('batch', z.object({ window: Duration })),
   /** Hold until the hour this person most often engages (campaign send-time optimisation), within the next 24 h. */
   node('wait_best_send_time', Empty),
-  node('wait_for_event', z.object({ eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), timeout: Duration })),
+  /** `filter` is equality only; `conditions` add operators (neq, gt, contains, exists, between, ...) over the event properties. */
+  node('wait_for_event', z.object({ eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional(), timeout: Duration })),
   /** Resume on whichever listed event arrives first (path `event:<key>`), or `timeout`. */
   node('wait_for_any_event', z.object({
-    events: z.array(z.object({ key: z.string().min(1).max(32), eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional() })).min(2).max(10),
+    events: z.array(z.object({ key: z.string().min(1).max(32), eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional() })).min(2).max(10),
     timeout: Duration,
   })),
   node('wait_until_condition', z.object({ definition: SegmentDefinition, timeout: Duration })),
@@ -237,8 +254,14 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   /** Counts this profile's sends (delivery data) in the window. Over the cap: `hold` waits until room opens, `branch` follows the `limited` edge, `exit` ends the enrollment. */
   node('frequency_cap', z.object({ maxSends: z.number().int().min(1), windowHours: z.number().int().min(1), channel: Channel.optional(), onExceed: OnExceed })),
   node('suppression_check', z.object({ channel: Channel, purpose: Purpose.default('marketing') })),
-  /** At most `perHour` enrollments through this node per clock-aligned window (`windowMinutes`, default an hour). */
-  node('rate_limit', z.object({ perHour: z.number().int().min(1), windowMinutes: z.number().int().min(1).max(10080).default(60), onExceed: OnExceed })),
+  /**
+   * At most `perHour` enrollments through this node per clock-aligned window (`windowMinutes`, default an hour). Nodes with the same `slot`
+   * share one counter; `perMailbox` splits that counter by the enrollment's pinned mailbox.
+   */
+  node('rate_limit', z.object({
+    perHour: z.number().int().min(1), windowMinutes: z.number().int().min(1).max(10080).default(60), onExceed: OnExceed,
+    slot: z.string().min(1).max(64).optional(), perMailbox: z.boolean().optional(),
+  })),
   node('add_suppression', z.object({ channel: Channel, reason: z.string().max(64).default('workflow') })),
   /** Lifts only manual suppressions; bounces, complaints and STOPs stay. */
   node('remove_suppression', z.object({ channel: Channel })),
@@ -253,6 +276,48 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   node('assign_owner', Action),
   node('rotate_mailbox', Action),
   node('follow_up_task', Action),
+  /** Add (or take) points on the account score of the contact's primary company (leads module). */
+  node('score_company', z.object({ delta: z.number().int().min(-1000).max(1000) })),
+  /** Score the contact's company when the journey was started by a form submission (optionally only that form); otherwise skipped. */
+  node('score_company_from_form', z.object({ delta: z.number().int().min(-1000).max(1000), formId: Id.optional() })),
+  /** WS09: show a content-only site message to this contact on their next visit (held until `expiresInHours`). */
+  node('send_site_message', z.object({ siteMessageId: Id, expiresInHours: z.number().int().min(1).max(720).default(168) })),
+  /** WS09: put content into this contact's web content slot `slotKey`; it wins over the slot's rules until it expires. */
+  node('push_slot_content', z.object({ slotKey: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/), html: z.string().min(1).max(20_000), expiresInHours: z.number().int().min(1).max(720).default(168) })),
+  // WS04: object journeys, code and user-defined actions, native app actions. Text values are liquid (`{{ profile.email }}`).
+  /** Create, or update when it exists, the custom object of `typeKey` with this external id; `link` also relates it to the contact. */
+  node('upsert_object', z.object({
+    typeKey: z.string().min(1).max(64), externalId: z.string().min(1).max(500), name: z.string().max(500).optional(),
+    attributes: z.record(z.string(), z.string().max(2000)).default({}), link: z.boolean().default(true), role: z.string().max(64).optional(),
+  })),
+  /** Add or remove the contact's relationship to an existing custom object (by external id). `failed` (optional edge) when the object does not exist. */
+  node('relate_object', z.object({ typeKey: z.string().min(1).max(64), externalId: z.string().min(1).max(500), op: z.enum(['link', 'unlink']).default('link'), role: z.string().max(64).optional() })),
+  /** Run a code action (Settings > Webhooks > Call templates, kind code) and wait for it; its outputs land on the profile for later steps. `failed` on FAIL_CONTINUE, give-up or timeout. */
+  node('run_code', z.object({
+    webhookTemplateId: Id, inputFields: z.record(z.string(), z.string().max(2000)).default({}), maxAttempts: z.number().int().min(1).max(8).default(3),
+    responseTimeout: Duration.default({ amount: 10, unit: 'minutes' }),
+  })),
+  /** A workspace-defined action type (Automation > Custom types): fills its fields and runs the action behind it, waiting for the outcome. */
+  node('custom_action', z.object({ typeKey: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), values: z.record(z.string(), z.string().max(2000)).default({}), responseTimeout: Duration.default({ amount: 10, unit: 'minutes' }) })),
+  /** Google Sheets: append one row. `secretName` holds a Google access token with the spreadsheets scope. */
+  node('sheets_append_row', z.object({ spreadsheetId: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/), sheet: z.string().min(1).max(100).default('Sheet1'), values: z.array(z.string().max(2000)).min(1).max(50), secretName: z.string().min(1).max(100) })),
+  /** Calendly: create a single-use scheduling link for an event type and save its URL on the profile (`field`) for the next message. `secretName` holds a Calendly personal access token. */
+  node('calendly_link', z.object({ eventTypeUri: z.url().max(500), secretName: z.string().min(1).max(100), field: z.string().min(1).max(128).default('calendly_link'), maxEventCount: z.number().int().min(1).max(10).default(1) })),
+  // WS14 channels
+  /** Slack message from an installed workspace app: to a channel, or as a DM to the contact (looked up by their email). Text is liquid. */
+  node('send_slack', z.object({ installId: Id, slackTemplateId: Id.optional(), text: z.string().max(3000).optional(), to: z.enum(['channel', 'contact']).default('channel'), channel: z.string().max(80).optional() })),
+  /** Send a WhatsApp Flow and wait for the answer: branches match one answer field; `timeout` when no answer, `blocked` when it could not be sent. */
+  node('send_whatsapp_flow', z.object({
+    flowId: Id, purpose: Purpose.default('marketing'), timeout: Duration.default({ amount: 1, unit: 'days' }),
+    branches: z.array(z.object({ key: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), field: z.string().min(1).max(64), value: z.string().max(200) })).max(10).default([]),
+  })),
+  /** Show a developer-defined component in the app and wait until it reports one of `events` (handle event:<name>) or `timeout`. */
+  node('in_app_tracker', z.object({
+    componentKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), fields: z.record(z.string(), z.string().max(2000)).default({}),
+    events: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(10), timeout: Duration.default({ amount: 7, unit: 'days' }),
+  })),
+  /** Add the contact to, or remove them from, an ad platform custom audience. Contacts who opted out of ads are never added. */
+  node('ad_audience', z.object({ adAccountId: Id, audienceId: z.string().min(1).max(200), op: z.enum(['add', 'remove']).default('add') })),
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNode>;
 export type NodeType = WorkflowNode['type'];

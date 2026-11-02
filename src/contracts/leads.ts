@@ -110,20 +110,30 @@ export const CompanyDto = z.object({
   id: Id, domain: z.string(), name: z.string(), industry: z.string().nullable(), sizeBand: z.string().nullable(), country: z.string().nullable(),
   suppressed: z.boolean(), suppressionReason: z.string().nullable(), leadCount: z.number().int(), contactCount: z.number().int(), createdAt: Timestamp,
   stage: z.string().optional(), ownerUserId: Id.nullable().optional(),
+  customFields: z.record(z.string(), z.unknown()).optional(), score: z.number().int().optional(),
 });
 export const CompanyListQuery = PageQuery.extend({ q: z.string().max(100).optional(), suppressed: z.coerce.boolean().optional() });
 export const CompanyPage = pageResult(CompanyDto);
-export const M3ProfileCompanies = z.object({ items: z.array(CompanyDto) });
-export const CompanyDetail = CompanyDto.extend({ leads: z.array(LeadDto), profileIds: z.array(Id) });
+export const CompanyLinkFields = z.object({ isPrimary: z.boolean(), jobTitle: z.string().nullable(), role: z.string().nullable() });
+/** Every company the contact is linked to, primary first; `link` carries the link fields. */
+export const M3ProfileCompanies = z.object({ items: z.array(CompanyDto.extend({ link: CompanyLinkFields.optional() })) });
+export const CompanyDetail = CompanyDto.extend({ leads: z.array(LeadDto), profileIds: z.array(Id), contacts: z.array(CompanyLinkFields.extend({ profileId: Id })).optional() });
 export const CreateCompanyBody = z.object({
   domain: z.string().trim().min(3).max(253), name: z.string().trim().min(1).max(200).optional(), industry: z.string().max(100).optional(),
   sizeBand: z.string().max(30).optional(), country: z.string().length(2).optional(),
+  /** Values for the workspace's company fields (`GET /v1/leads/company-fields`); validated against that registry. */
+  customFields: z.record(z.string().max(64), z.unknown()).optional(),
 });
 export const ImportCompaniesBody = z.object({ rows: z.array(CreateCompanyBody).min(1).max(1000) });
 export const ImportCompaniesResult = z.object({ imported: z.number().int(), skipped: z.array(z.object({ row: z.number().int(), domain: z.string(), reason: z.string() })) });
 export const UpdateCompanyBody = CreateCompanyBody.omit({ domain: true }).partial();
 export const SuppressCompanyBody = z.object({ reason: z.string().trim().max(200).optional() });
-export const LinkCompanyBody = z.object({ profileId: Id });
+export const LinkCompanyBody = z.object({
+  profileId: Id,
+  /** true: make this the contact's primary company; false: an extra link; omitted: primary only if the contact has none. */
+  primary: z.boolean().optional(),
+  jobTitle: z.string().trim().max(200).nullish(), role: z.string().trim().max(100).nullish(),
+});
 
 export const LineType = z.enum(['mobile', 'landline', 'voip', 'toll_free', 'other', 'unknown']);
 export const PhoneLookupBody = z.object({ phone: z.string().max(40), country: z.string().length(2).optional(), force: z.boolean().default(false) });

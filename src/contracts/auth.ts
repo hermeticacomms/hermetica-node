@@ -11,6 +11,8 @@ export const SignupBody = z.object({
   name: z.string().min(1).max(120),
   workspaceName: z.string().min(1).max(120),
   timezone: z.string().max(64).optional(),
+  /** Optional token for the operator's sign-up check provider (card setup, device fingerprint). */
+  checkEvidence: z.string().max(500).optional(),
 });
 export const AuthForgotBody = z.object({ email: z.email().max(254) });
 export const AuthResetBody = z.object({ token: z.string().min(10).max(200), password: SignupBody.shape.password });
@@ -20,7 +22,7 @@ export const SignupDomainRulesDto = z.object({ allow: z.array(z.string().max(255
 export const LoginBody = z.object({ email: z.email().max(254), password: z.string().min(1).max(200), totp: z.string().max(32).optional() });
 export const TotpCodeBody = z.object({ code: z.string().min(6).max(32) });
 
-export const UserDto = z.object({ id: Id, email: z.string(), name: z.string(), mfaEnabled: z.boolean(), avatarUrl: z.string().nullable().optional() });
+export const UserDto = z.object({ id: Id, email: z.string(), name: z.string(), mfaEnabled: z.boolean(), avatarUrl: z.string().nullable().optional(), emailVerified: z.boolean().optional() });
 export const MeProfileBody = z.object({ name: z.string().trim().min(1).max(120).optional(), avatarUrl: z.url({ protocol: /^https$/ }).max(500).nullable().optional() });
 export const WorkspaceDto = z.object({
   id: Id,
@@ -36,7 +38,10 @@ export const WorkspaceDto = z.object({
   fxRates: z.record(z.string(), z.number()),
   sessionDays: z.number().int().nullable(),
   campaignNotifyEmails: z.array(z.string()),
+  websiteUrl: z.string().nullable().optional(),
+  industry: z.string().nullable().optional(),
 });
+export const INDUSTRIES = ['ecommerce', 'saas', 'agency', 'media', 'education', 'nonprofit', 'finance', 'health', 'travel', 'real_estate', 'b2b_services', 'other'] as const;
 export const Currency = z.string().regex(/^[A-Z]{3}$/, 'Use a 3-letter currency code such as USD');
 export const WorkspacePatch = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -50,6 +55,8 @@ export const WorkspacePatch = z.object({
   fxRates: z.record(Currency, z.number().positive().max(1_000_000)).optional(),
   sessionDays: z.number().int().min(1).max(365).nullable().optional(),
   campaignNotifyEmails: z.array(z.email()).max(10).optional(),
+  websiteUrl: z.url({ protocol: /^https?$/ }).max(500).nullable().optional(),
+  industry: z.enum(INDUSTRIES).nullable().optional(),
 });
 
 export const AuthResult = z.object({ user: UserDto, workspace: WorkspaceDto.nullable(), mfaRequired: z.boolean(), expiresAt: Timestamp.nullable() });
@@ -59,6 +66,10 @@ export const MeResult = z.object({
   workspaces: z.array(z.object({ id: Id, name: z.string(), role: Role })),
   /** Set while an owner is viewing the app as this user. */
   impersonatedBy: z.object({ id: Id, name: z.string() }).nullable().optional(),
+  /** The account must confirm its email before it can act (it holds no scope until then). */
+  verificationRequired: z.boolean().optional(),
+  /** Platform operator (PLATFORM_OPERATOR_EMAILS): the operator console is open to them. */
+  operator: z.boolean().optional(),
 });
 export const SessionDto = z.object({ id: Id, ip: z.string().nullable(), userAgent: z.string().nullable(), createdAt: Timestamp, expiresAt: Timestamp });
 

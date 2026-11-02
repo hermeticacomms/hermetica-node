@@ -9,6 +9,8 @@ const Topics = z.array(WebhookTopicPattern).min(1).max(50);
 
 /** A payload condition on `data` (dotted path). All filters of an endpoint must match for a delivery to be created. */
 export const WebhookFilter = z.object({
+  /** Stable id, assigned on save when absent (B5); older filters were addressed by position. */
+  id: z.string().min(1).max(40).optional(),
   path: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/).max(120),
   op: z.enum(['eq', 'neq', 'in', 'contains', 'exists', 'gt', 'lt']),
   value: z.unknown().optional(),
@@ -111,6 +113,8 @@ export type WebhookDeliveryDto = z.infer<typeof WebhookDeliveryDto>;
 export const IntegrationSecretName = z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}$/, 'Use lowercase letters, digits, ".", "-" and "_"');
 export const PutIntegrationSecretBody = z.object({ value: z.string().min(1).max(4096), description: z.string().max(300).nullable().optional() });
 export const IntegrationSecretParams = z.object({ name: IntegrationSecretName });
+/** Signs in with Google and saves the refreshable grant under `secretName` (journey Google Sheets steps reference it). */
+export const GoogleSecretStartBody = z.object({ secretName: IntegrationSecretName });
 /** Never carries the value. */
 export const IntegrationSecretDto = z.object({ id: Id, name: z.string(), description: z.string().nullable(), createdAt: Timestamp, updatedAt: Timestamp });
 export const IntegrationSecretList = z.object({ items: z.array(IntegrationSecretDto) });

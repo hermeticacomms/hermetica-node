@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BlockDoc } from './content-blocks.ts';
 import { Channel, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { PushExtras } from './push.ts';
+import { PostcardDesign } from './postcards.ts';
 
 export const MessageStatus = z.enum([
   'queued', 'deferred', 'blocked', 'sending', 'accepted', 'delivered', 'bounced', 'complained', 'failed', 'cancelled', 'needs_reconcile',
@@ -18,6 +19,12 @@ export type StoredAttachment = z.infer<typeof StoredAttachment>;
 export const ALLOWED_PLAIN_HEADERS = ['list-id', 'list-help', 'list-owner', 'list-archive', 'list-post', 'precedence', 'importance', 'sensitivity', 'organization', 'keywords', 'comments', 'content-language'] as const;
 const headerAllowed = (k: string) => (/^X-[\w-]{1,100}$/i.test(k) && !/^x-(hermetica|sg|mailgun|ses|pm)-/i.test(k)) || (ALLOWED_PLAIN_HEADERS as readonly string[]).includes(k.toLowerCase());
 export const CustomHeaders = z.record(z.string().refine(headerAllowed, 'custom headers must start with X- (not a provider/internal prefix) or be one of: ' + ALLOWED_PLAIN_HEADERS.join(', ')), z.string().max(998).regex(/^[^\r\n]*$/)).refine((m) => Object.keys(m).length <= 20);
+
+/** How merge tags in the content are written: Liquid `{{ vars.x }}` (default), Mailchimp `*|X|*`, or Handlebars-style `{{x}}` (vars at the top level). */
+export const MergeLanguage = z.enum(['liquid', 'mailchimp', 'handlebars']);
+export type MergeLanguage = z.infer<typeof MergeLanguage>;
+/** `mc:edit="name"` region overrides for one send (Mandrill send-template `template_content`). */
+export const TxTemplateContent = z.array(z.object({ name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), content: z.string().max(512_000) })).max(50);
 
 export const SendSource = z.object({
   kind: z.enum(['campaign', 'workflow', 'sequence', 'api']),
@@ -82,6 +89,8 @@ export const SendRequest = z.object({
   /** Prefer the verified sender identity with this from-address (a list default). Never creates or verifies a sender: if none of the route's verified senders match, it is ignored. */
   fromEmailPreference: z.string().email().max(320).optional(),
   replyTo: ReplyToList.optional(),
+  /** Transactional / operational: also add RFC 8058 one-click unsubscribe headers (marketing and prospecting always have them). */
+  oneClickUnsubscribe: z.boolean().optional(),
   /** Footer postal address for this message; wins over the brand kit and workspace address. */
   footerAddress: z.string().max(600).optional(),
   /** SMS only: public https image URLs sent as MMS media (providers without MMS ignore them). */
@@ -93,7 +102,29 @@ export const SendRequest = z.object({
   destinationOverride: z.string().email().max(320).optional(),
   /** Set by requestSend from a restricted API key; dispatch re-applies it so a re-route never leaves the allowed senders. */
   senderScope: z.object({ connections: z.array(z.string()).optional(), domains: z.array(z.string()).optional() }).optional(),
-}).refine((r) => Boolean(r.templateId) !== Boolean(r.inline), { message: 'Provide exactly one of templateId or inline' })
+  /** Postcard only: the front/back design and size; postcards carry no template or inline body. */
+  postcard: PostcardDesign.optional(),
+  /** Transactional (Mandrill) options, see TxSendOptions: CSS inlining, query-string-free click reporting, a visible To list, no stored body copy. */
+  inlineCss: z.boolean().optional(),
+  urlStripQs: z.boolean().optional(),
+  displayTo: z.array(z.string().email().max(320)).max(100).optional(),
+  storeContent: z.boolean().optional(),
+  /** utm defaults go only to links on these domains (Mandrill google_analytics_domains). */
+  utmDomains: z.array(z.string().max(253)).max(50).optional(),
+  mergeLanguage: MergeLanguage.optional(),
+  templateContent: TxTemplateContent.optional(),
+  important: z.boolean().optional(),
+  /** Per-message branded hosts, already checked as verified in this workspace. */
+  trackingDomain: z.string().max(253).optional(),
+  signingDomain: z.string().max(253).optional(),
+  returnPathDomain: z.string().max(253).optional(),
+  /** send-raw: object-storage key of the MIME message relayed as given (headers we own are replaced); rendering only fills the log copy. */
+  rawMimeKey: z.string().max(500).optional(),
+  /** false = unknown variables render empty instead of blocking the send (required links such as unsubscribe still block). Default strict. */
+  strictLiquid: z.boolean().optional(),
+  /** The list a campaign send goes to: its default mailer is tried after the request's own route. */
+  listId: Id.optional(),
+}).refine((r) => (r.channel === 'postcard' ? !!r.postcard && !r.templateId && !r.inline : Boolean(r.templateId) !== Boolean(r.inline)), { message: 'Provide exactly one of templateId or inline (postcards: the postcard design only)' })
   .refine((r) => Boolean(r.route.connectionId || r.route.poolId || r.route.routePolicyId), { message: 'route needs connectionId, poolId or routePolicyId' });
 export type SendRequest = z.infer<typeof SendRequest>;
 
@@ -120,6 +151,8 @@ export const SendApiBody = z.object({
 });
 
 export const MessageListQuery = PageQuery.extend({
+  /** Sort key; `order` gives the direction. Default createdAt. */
+  sort: z.enum(['createdAt', 'sentAt', 'status', 'destination']).optional(),
   profileId: Id.optional(),
   status: MessageStatus.optional(),
   sourceKind: SendSource.shape.kind.optional(),

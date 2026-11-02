@@ -21,6 +21,17 @@ export const EventContext = z.object({
 });
 
 export const EventProfile = z.object({ email: z.string().optional(), phone: z.string().optional(), externalId: z.string().max(256).optional() });
+const EventLocation = z.object({
+  city: z.string().max(128).optional(), region: z.string().max(128).optional(), country: z.string().max(64).optional(), zip: z.string().max(32).optional(),
+  address1: z.string().max(256).optional(), latitude: z.number().min(-90).max(90).optional(), longitude: z.number().min(-180).max(180).optional(), timezone: z.string().max(64).optional(),
+});
+/** The event's person: identifiers plus profile data written inline (names, location, custom properties). */
+export const EventProfileData = EventProfile.extend({
+  firstName: z.string().max(128).optional(), lastName: z.string().max(128).optional(), locale: z.string().max(32).optional(),
+  location: EventLocation.optional(),
+  /** Custom profile properties, stored as profile attributes. */
+  attributes: z.record(z.string().max(128), z.unknown()).optional(),
+});
 
 export const IngestEvent = z.object({
   name: EventName,
@@ -28,13 +39,21 @@ export const IngestEvent = z.object({
   properties: z.record(z.string().max(128), z.unknown()).optional(),
   /** Minor currency units (cents). */
   value: z.number().int().nonnegative().optional(),
+  /** Decimal value in major units (9.99), the alternative to `value`; stored in the currency's minor units. */
+  amount: z.number().nonnegative().max(1e12).optional(),
   currency: z.string().length(3).optional(),
   dedupeKey: z.string().min(1).max(256).optional(),
-  profile: EventProfile.optional(),
+  profile: EventProfileData.optional(),
+  /** Match the person on this key instead: email, phone, externalId, or a custom field declared unique. */
+  correlationKey: z.string().min(1).max(64).optional(),
+  correlationValue: z.union([z.string().min(1).max(256), z.number()]).optional(),
   anonymousId: z.string().min(1).max(128).optional(),
   context: EventContext.optional(),
 });
 export type IngestEvent = z.infer<typeof IngestEvent>;
+export const IngestEventChecked = IngestEvent
+  .refine((e) => e.value === undefined || e.amount === undefined, { message: 'Send value (cents) or amount (decimal), not both', path: ['amount'] })
+  .refine((e) => (e.correlationKey === undefined) === (e.correlationValue === undefined), { message: 'correlationKey and correlationValue go together', path: ['correlationKey'] });
 
 /** Batch bodies keep items opaque so one bad event is rejected individually, not the whole request. */
 export const BatchConsent = z.object({ analytics: z.boolean().optional(), marketing: z.boolean().optional() });
@@ -64,6 +83,10 @@ export const EventRecord = z.object({
   properties: z.record(z.string(), z.unknown()),
   value: z.number().int().nullable(),
   currency: z.string().nullable(),
+  /** With `include=metric`: the event's definition. */
+  metric: z.object({ name: z.string(), category: z.string(), goal: z.boolean() }).nullable().optional(),
+  /** With `include=profile`: who did it. */
+  profile: z.object({ id: Id, email: z.string().nullable(), firstName: z.string().nullable(), lastName: z.string().nullable() }).nullable().optional(),
 });
 export const ProfileEventsQuery = PageQuery.extend({ name: z.string().optional(), goal: z.enum(['true', 'false']).transform((v) => v === 'true').optional() });
 export const EventPage = pageResult(EventRecord);
@@ -116,3 +139,14 @@ export const CreateSiteConfig = z.object({
   retentionDays: z.number().int().positive().optional(),
 });
 export type CreateSiteConfig = z.input<typeof CreateSiteConfig>;
+
+/** Workspace-wide ingest settings: the server ingest switch and the custom field used as each person's primary key. */
+export const EventSettingsDto = z.object({
+  serverIngestEnabled: z.boolean(),
+  /** A custom field declared unique; an event whose profile carries it in `attributes` is matched on it. */
+  primaryKeyAttribute: z.string().nullable(),
+});
+export const UpdateEventSettingsBody = z.object({
+  serverIngestEnabled: z.boolean().optional(),
+  primaryKeyAttribute: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).nullable().optional(),
+});

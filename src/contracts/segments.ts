@@ -13,6 +13,8 @@ export const STANDARD_FIELDS = {
   email: 'string', phone: 'string', firstName: 'string', lastName: 'string', timezone: 'string', locale: 'string',
   country: 'string', city: 'string', region: 'string', source: 'string', lifecycleStage: 'string', ownerUserId: 'string',
   kind: 'string', createdAt: 'date',
+  /** When the profile last changed (date_modified) and when it first got an email, phone or external id (date_identified). */
+  updatedAt: 'date', identifiedAt: 'date',
 } as const;
 export type StandardField = keyof typeof STANDARD_FIELDS;
 export const ProfileField = z.union([
@@ -24,6 +26,9 @@ export const ProfileField = z.union([
 const str = z.string().max(512);
 const DateValue = z.union([z.iso.date(), z.iso.datetime({ offset: true })]);
 const days = z.number().int().min(0).max(3650);
+/** Calendar date tokens, in the workspace zone: weeks start on Monday. */
+export const CALENDAR_PERIODS = ['today', 'yesterday', 'tomorrow', 'this_week', 'last_week', 'next_week', 'this_month', 'last_month', 'next_month', 'this_year', 'last_year', 'next_year'] as const;
+export type CalendarPeriod = (typeof CALENDAR_PERIODS)[number];
 
 const REPEAT_COUNT = /\{(\d+)(?:,(\d*))?\}/y;
 
@@ -92,6 +97,8 @@ const DatePredicate = z.discriminatedUnion('op', [
   /** Month and day only, ignoring the year (birthdays, anniversaries): this calendar month, or a named month 1-12. */
   z.object({ valueType: z.literal('date'), op: z.literal('anniversary_this_month') }),
   z.object({ valueType: z.literal('date'), op: z.literal('anniversary_in_month'), month: z.number().int().min(1).max(12) }),
+  /** Falls in a calendar period: today, this/last/next week, month or year. */
+  z.object({ valueType: z.literal('date'), op: z.literal('in_period'), period: z.enum(CALENDAR_PERIODS) }),
 ]);
 /** "Is set" / "is not set" for every non-text type (text has its own exists/not_exists above). */
 const SetPredicate = z.object({ valueType: z.enum(['number', 'date', 'boolean', 'list']), op: z.enum(['exists', 'not_exists']) });
@@ -127,6 +134,13 @@ export const SEGMENT_SUPPRESSION_REASONS = ['unsubscribe', 'hard_bounce', 'compl
 export const PROXIMITY_COUNTRIES = ['US', 'GB', 'CA', 'AU', 'NZ', 'AT', 'BE', 'BG', 'HR', 'CZ', 'DK', 'FI', 'FR', 'DE', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'] as const;
 export const ProximityCountry = z.string().trim().length(2).toUpperCase().transform((c) => (c === 'UK' ? 'GB' : c)).refine((c) => (PROXIMITY_COUNTRIES as readonly string[]).includes(c), 'Distance searches work for the US, UK, Canada, Australia, New Zealand and most EU countries');
 const Cmp = z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']);
+/** Fixed company columns and their type. */
+export const COMPANY_FIELDS = { name: 'string', domain: 'string', industry: 'string', sizeBand: 'string', country: 'string', stage: 'string', createdAt: 'date' } as const;
+export type CompanyFixedField = keyof typeof COMPANY_FIELDS;
+const CompanyField = z.union([
+  z.enum(Object.keys(COMPANY_FIELDS) as [CompanyFixedField, ...CompanyFixedField[]]),
+  z.string().startsWith('fields.').refine((s) => PROPERTY_PATH_RE.test(s.slice('fields.'.length)), 'Invalid company field'),
+]);
 
 export const EventWindow = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ever') }),
@@ -139,8 +153,8 @@ export const EventWindow = z.discriminatedUnion('kind', [
   /** At least N days ago (everything older than that). */
   z.object({ kind: z.literal('older_than_days'), days: z.number().int().min(1).max(3650) }),
   z.object({ kind: z.literal('next_days'), days: z.number().int().min(1).max(3650) }),
-  /** The current or previous calendar day/week/month/quarter/year (UTC). */
-  z.object({ kind: z.literal('calendar'), unit: z.enum(['day', 'week', 'month', 'quarter', 'year']), which: z.enum(['this', 'last']) }),
+  /** The current, previous or next calendar day/week/month/quarter/year (workspace zone). */
+  z.object({ kind: z.literal('calendar'), unit: z.enum(['day', 'week', 'month', 'quarter', 'year']), which: z.enum(['this', 'last', 'next']) }),
 ]);
 export type EventWindow = z.infer<typeof EventWindow>;
 
@@ -228,7 +242,12 @@ export const SegmentCondition = z.discriminatedUnion('type', [
   z.object({ type: z.literal('location'), field: z.enum(['country', 'region', 'city']), op: z.enum(['eq', 'in']), values: z.array(str).min(1).max(200), ...neg }),
   z.object({
     type: z.literal('message_engagement'),
-    engagement: z.enum(['received', 'opened', 'clicked', 'replied', 'bounced', 'complained']),
+    /** `sent` = handed to the provider; `dropped` = blocked before sending (consent, suppression, limits). */
+    engagement: z.enum(['sent', 'received', 'opened', 'clicked', 'replied', 'bounced', 'complained', 'dropped']),
+    /** Only messages on this channel (SMS clicks, push receipts...). */
+    channel: Channel.optional(),
+    /** Only messages rendered from a template carrying this tag. */
+    templateTag: z.string().trim().min(1).max(64).optional(),
     /** Only messages rendered from this template (any version). */
     templateId: Id.optional(),
     /** Omitted = any source (campaign, journey, sequence, transactional). */
@@ -246,7 +265,8 @@ export const SegmentCondition = z.discriminatedUnion('type', [
     ...neg,
   }),
   /** The attribute currently holds `value` and has held it for at least `atLeastDays` (from attribute change history). */
-  z.object({ type: z.literal('attribute_has_been'), key: AttrKey, value: z.union([z.string().max(512), z.number(), z.boolean()]), atLeastDays: days, ...neg }),
+  /** `comparator: 'under'` flips it: holds the value now, but for less than `atLeastDays` days. */
+  z.object({ type: z.literal('attribute_has_been'), key: AttrKey, value: z.union([z.string().max(512), z.number(), z.boolean()]), atLeastDays: days, comparator: z.enum(['at_least', 'under']).optional(), ...neg }),
   /** The attribute changed (optionally from/to a value) within the window. */
   z.object({
     type: z.literal('attribute_changed'),
@@ -261,7 +281,17 @@ export const SegmentCondition = z.discriminatedUnion('type', [
   z.object({ type: z.literal('workflow_membership'), workflowId: Id, activeOnly: z.boolean().optional(), ...neg }),
   /** Stable pseudo-random slice of all profiles (same profile always lands in the same bucket for a given salt). */
   z.object({ type: z.literal('random_percent'), percent: z.number().int().min(0).max(100), salt: z.string().max(64).default(''), ...neg }),
+  /** The profile's company: a fixed company field, or `fields.<key>` for a company custom field. */
+  z.object({ type: z.literal('company_property'), field: CompanyField, predicate: Predicate, ...neg }),
+  /** Member of a list or campaign in a connected CRM (inbound membership sync). Omit `connectionId` for any connection. */
+  z.object({ type: z.literal('crm_list_membership'), connectionId: Id.optional(), crmListId: z.string().trim().min(1).max(256), ...neg }),
+  /** Object segments only: a property of the object itself. */
+  z.object({ type: z.literal('object_property'), path: PropertyPath, predicate: Predicate, ...neg }),
+  /** Object segments only: how many people are linked to the object, optionally only people in a segment. */
+  z.object({ type: z.literal('object_linked_profiles'), op: Cmp, value: z.number().int().min(0), segmentId: Id.optional(), ...neg }),
 ]);
+/** Conditions that test an object instead of a person; only object segments use them, and object segments use only them. */
+export const OBJECT_CONDITIONS = ['object_property', 'object_linked_profiles'] as const;
 export type SegmentCondition = z.infer<typeof SegmentCondition>;
 
 export interface SegmentGroup {
@@ -314,21 +344,30 @@ export const SegmentDto = z.object({
   memberCount: z.number().int(),
   dependencyKeys: z.array(z.string()),
   version: z.number().int(),
+  /** `profile`, or the custom object type key the segment selects (an object segment). */
+  subject: z.string(),
+  starred: z.boolean(),
   tags: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
 export const SegmentPage = z.object({ items: z.array(SegmentDto), nextCursor: z.uuid().nullable() });
-export const CreateSegmentBody = z.object({ name: z.string().min(1).max(200), description: z.string().max(2000).nullish(), folder: z.string().trim().min(1).max(80).nullish(), definition: SegmentDefinition, tags: z.array(z.string().trim().min(1).max(64)).max(50).optional() });
+/** `profile` (default) or a custom object type key (segments the objects themselves). */
+export const SegmentSubject = z.string().regex(/^(profile|[a-z][a-z0-9_]{0,62})$/, 'profile or an object type key');
+export const CreateSegmentBody = z.object({
+  name: z.string().trim().min(1).max(200), description: z.string().max(2000).nullish(), folder: z.string().trim().min(1).max(80).nullish(), definition: SegmentDefinition,
+  tags: z.array(z.string().trim().min(1).max(64)).max(50).optional(), subject: SegmentSubject.optional(), starred: z.boolean().optional(),
+});
 export const UpdateSegmentBody = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).nullish(),
   folder: z.string().trim().min(1).max(80).nullish(),
   definition: SegmentDefinition.optional(),
   status: z.enum(['active', 'archived']).optional(),
+  starred: z.boolean().optional(),
   tags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
 });
-export const SegmentPreviewBody = z.object({ definition: SegmentDefinition });
+export const SegmentPreviewBody = z.object({ definition: SegmentDefinition, subject: SegmentSubject.optional() });
 export const SegmentPreviewResult = z.object({
   count: z.number().int(),
   sample: z.array(ProfileDto),
@@ -338,9 +377,20 @@ export const SegmentPreviewResult = z.object({
 export const SegmentVersionDto = z.object({ id: Id, segmentId: Id, n: z.number().int(), definition: SegmentDefinition, createdBy: z.string(), createdAt: Timestamp });
 export const SegmentVersionList = z.object({ items: z.array(SegmentVersionDto) });
 export const SnapshotDto = z.object({ id: Id, segmentId: Id.nullable(), takenAt: Timestamp, count: z.number().int() });
-export const MembersQuery = PageQuery;
-/** Segment list with an optional name search (case-insensitive substring). */
-export const SegmentListQuery = PageQuery.extend({ q: z.string().max(200).optional() });
+const Csv = (max: number) => z.string().max(max * 40).transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean)).pipe(z.array(z.uuid()).max(max));
+const Bool = z.enum(['true', 'false']).transform((v) => v === 'true');
+export const SEGMENT_SORTS = ['name', '-name', 'created_at', '-created_at', 'updated_at', '-updated_at', 'member_count', '-member_count'] as const;
+/** Members of a segment: filter by email, phone and joined-at; `sort` by joined-at (default: by profile id). */
+export const MembersQuery = PageQuery.extend({
+  email: z.string().trim().min(1).max(320).optional(), phone: z.string().trim().min(1).max(32).optional(),
+  joinedFrom: Timestamp.optional(), joinedTo: Timestamp.optional(), sort: z.enum(['joined_at', '-joined_at']).optional(),
+});
+/** Segment list: name search (case-insensitive substring), ids, created/updated ranges, active or archived, starred, sort. */
+export const SegmentListQuery = PageQuery.extend({
+  q: z.string().max(200).optional(), ids: Csv(100).optional(),
+  createdFrom: Timestamp.optional(), createdTo: Timestamp.optional(), updatedFrom: Timestamp.optional(), updatedTo: Timestamp.optional(),
+  active: Bool.optional(), starred: Bool.optional(), sort: z.enum(SEGMENT_SORTS).optional(),
+});
 export const EvaluateResult = z.object({ queued: z.literal(true) });
 
 export const SegmentDiffQuery = z.object({ from: z.iso.datetime({ offset: true }).or(z.iso.date()), to: z.iso.datetime({ offset: true }).or(z.iso.date()) });

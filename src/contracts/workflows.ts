@@ -62,8 +62,12 @@ export const Trigger = z.discriminatedUnion('type', [
   /** Catalog event `catalog.low_inventory` (stock fell through 10, 5, 3 or 1); `below` narrows to a lower stock level. */
   t('low_inventory', { sku: z.string().max(128).optional(), below: z.number().int().min(1).max(10).optional() }),
   t('form_submitted', { formId: Id }),
-  /** `endsAt` (ISO date-time) and `maxRuns` stop the recurrence; leave both empty to repeat until unpublished. */
-  t('schedule', { cron: z.string().min(1).max(100), tz: z.string(), audience: z.object({ segmentId: Id.optional(), listId: Id.optional() }), endsAt: z.iso.datetime({ offset: true }).optional(), maxRuns: z.number().int().min(1).max(100_000).optional() }),
+  /** `endsAt` (ISO date-time) and `maxRuns` stop the recurrence; leave both empty to repeat until unpublished. `maxEntriesPerRun` caps how many enter at each occurrence.
+   * `localTime`: the cron runs on each person's own wall clock (their profile zone, else `tz`), so "9:00" is 9:00 where they are. */
+  t('schedule', {
+    cron: z.string().min(1).max(100), tz: z.string(), audience: z.object({ segmentId: Id.optional(), listId: Id.optional() }), endsAt: z.iso.datetime({ offset: true }).optional(), maxRuns: z.number().int().min(1).max(100_000).optional(),
+    maxEntriesPerRun: z.number().int().min(1).max(100_000).optional(), localTime: z.boolean().optional(),
+  }),
   /** A new item (published within the last poll window) appeared in the feed; starts the audience, with the item as the trigger event. */
   t('rss_item', { url: z.url(), audience: z.object({ segmentId: Id.optional(), listId: Id.optional() }) }),
   t('webhook', { inboundKey: z.string().min(1).max(64) }),
@@ -74,8 +78,16 @@ export const Trigger = z.discriminatedUnion('type', [
   /** `keyword`: for SMS replies, the first word of the reply (case-insensitive), e.g. STOP-style opt-ins like JOIN. */
   t('reply_received', { classification: z.string().optional(), keyword: z.string().max(64).optional() }),
   t('meeting_booked', {}),
+  /** The person's device entered an in-app geofence (the SDK hit is recorded as a `geofence_entered` event, so the app sends nothing custom). Empty `geofenceId` = any geofence. */
+  t('geofence_entered', { geofenceId: z.string().max(128).optional() }),
+  /** A workspace-registered trigger type (Settings > Custom actions and triggers): fires on its event when every `values` entry equals the event property. */
+  t('custom', { typeKey: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), values: z.record(z.string(), z.unknown()).default({}) }),
   t('mailbox_disconnected', {}),
   t('campaign_paused', {}),
+  /** Loyalty ledger (packages/loyalty). `direction`: earned = points added, spent = points removed. */
+  t('loyalty_points_changed', { programId: Id.optional(), direction: z.enum(['earned', 'spent', 'any']).optional() }),
+  t('loyalty_tier_changed', { programId: Id.optional(), toTierId: Id.optional() }),
+  t('loyalty_reward_available', { programId: Id.optional(), rewardId: Id.optional() }),
 ]);
 export type Trigger = z.infer<typeof Trigger>;
 export type TriggerType = Trigger['type'];
@@ -148,13 +160,23 @@ export const CreateWorkflowBody = z.object({
   tags: z.array(z.string().max(64)).max(50).default([]),
   definition: WorkflowDefinition.partial().optional(),
 });
+export const WorkflowColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a #rrggbb colour');
 export const UpdateWorkflowBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
+  color: WorkflowColor.nullable().optional(),
   folder: z.string().max(100).nullish(),
   tags: z.array(z.string().max(64)).max(50).optional(),
   definition: WorkflowDefinition.optional(),
 });
-export const WorkflowListQuery = PageQuery.extend({ status: WorkflowStatus.optional(), folder: z.string().optional(), mode: WorkflowMode.optional() });
+/** `started*` is when the first version went live. Sorts other than the default (newest id first) still page by cursor. */
+export const WorkflowListQuery = PageQuery.extend({
+  status: WorkflowStatus.optional(), folder: z.string().optional(), mode: WorkflowMode.optional(),
+  q: z.string().trim().max(200).optional(), archived: z.enum(['true', 'false']).optional(), triggerType: z.string().max(32).optional(),
+  createdFrom: z.coerce.date().optional(), createdTo: z.coerce.date().optional(), updatedFrom: z.coerce.date().optional(), updatedTo: z.coerce.date().optional(),
+  startedFrom: z.coerce.date().optional(), startedTo: z.coerce.date().optional(),
+  sort: z.enum(['created', '-created', 'updated', '-updated', 'name', '-name']).optional(),
+});
+export type WorkflowListQuery = z.infer<typeof WorkflowListQuery>;
 const Row = z.looseObject({ id: Id });
 export const AbState = z.object({ variants: z.array(z.object({ versionId: Id, weight: z.number().int() })), startedAt: Timestamp }).nullable();
 /** Draft graph / triggers / settings are jsonb validated on write (WorkflowDefinition); they are passed through unparsed to keep list responses cheap. */
@@ -167,6 +189,7 @@ export const WorkflowDto = z.object({
   publishedVersionId: Id.nullable(),
   folder: z.string().nullable(),
   tags: z.array(z.string()),
+  color: z.string().nullable().optional(),
   draftGraph: z.unknown(),
   draftTriggers: z.unknown(),
   draftSettings: z.unknown(),
@@ -188,7 +211,7 @@ export const EnrollmentListQuery = PageQuery.extend({ state: EnrollmentState.opt
 export const ResumeBody = z.object({ policy: z.enum(['run_now', 'skip_missed_sends']).default('run_now') });
 /** `data` is exposed to the journey as the trigger event (`trigger` conditions, `{{ trigger.x }}` / `{{ event.x }}` liquid). */
 export const EnrollBody = z.object({ profileIds: z.array(Id).min(1).max(1000), triggerType: z.string().max(32).default('api'), data: z.record(z.string(), z.unknown()).optional() });
-export const EnrollResult = z.object({ enrolled: z.number().int(), skipped: z.array(z.object({ profileId: Id, reason: z.string() })) });
+export const EnrollResult = z.object({ enrolled: z.number().int(), skipped: z.array(z.object({ profileId: Id, reason: z.string() })), /** The rest of an object segment is enrolled by the worker. */ queued: z.boolean().optional() });
 export const JumpBody = z.object({ nodeId: NodeId });
 /** New wake-up time for a waiting person; must be in the future. */
 export const RescheduleBody = z.object({ runAt: z.coerce.date() });

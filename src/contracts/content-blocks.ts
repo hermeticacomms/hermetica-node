@@ -19,11 +19,11 @@ export type Block = Base & (
   | { type: 'section'; background?: string; backgroundImage?: string; children: Block[] }
   | { type: 'columns'; columns: Block[][] }
   | { type: 'text'; html: string }
-  | { type: 'image'; src: string; alt?: string; href?: string; width?: number; params?: Record<string, string> }
-  | { type: 'button'; label: string; href: string; background?: string; color?: string }
+  | { type: 'image'; src: string; alt?: string; href?: string; width?: number; params?: Record<string, string>; brandItemId?: string }
+  | { type: 'button'; label: string; href: string; background?: string; color?: string; brandItemId?: string }
   | { type: 'divider' }
   | { type: 'spacer'; height?: number }
-  | { type: 'social'; items: { network: string; href: string }[] }
+  | { type: 'social'; items: { network: string; href: string }[]; brandItemId?: string }
   | { type: 'html'; html: string }
   | { type: 'product'; feedId: string; limit?: number; mode?: ProductMode; category?: string }
   | { type: 'coupon'; poolId: string }
@@ -49,11 +49,15 @@ export const Block: z.ZodType<Block> = z.lazy(() =>
     z.object({ ...base, type: z.literal('text'), html: z.string().max(100_000) }),
     z.object({ ...base, type: z.literal('image'), src: z.string().max(2048), alt: z.string().max(500).optional(), href: z.string().max(2048).optional(), width: z.number().int().min(1).max(1200).optional(),
       /** Query parameters added to `src` at render; values may hold merge tags (`{{ profile.first_name }}`), URL-encoded per recipient. For personalized image services. */
-      params: z.record(z.string().regex(/^[a-zA-Z0-9_]{1,32}$/), z.string().max(200)).refine((r) => Object.keys(r).length <= 10, 'At most 10 parameters').optional() }),
-    z.object({ ...base, type: z.literal('button'), label: z.string().max(200), href: z.string().max(2048), background: Color.optional(), color: Color.optional() }),
+      params: z.record(z.string().regex(/^[a-zA-Z0-9_]{1,32}$/), z.string().max(200)).refine((r) => Object.keys(r).length <= 10, 'At most 10 parameters').optional(),
+      /** A brand logo item: fills src/alt/link/size wherever the block leaves them empty. */
+      brandItemId: z.uuid().optional() }),
+    // brandItemId: a brand button style (padding, border, font); the block's own colours still win.
+    z.object({ ...base, type: z.literal('button'), label: z.string().max(200), href: z.string().max(2048), background: Color.optional(), color: Color.optional(), brandItemId: z.uuid().optional() }),
     z.object({ ...base, type: z.literal('divider') }),
     z.object({ ...base, type: z.literal('spacer'), height: z.number().int().min(1).max(200).optional() }),
-    z.object({ ...base, type: z.literal('social'), items: z.array(z.object({ network: z.string().max(32), href: z.string().max(2048) })).max(12) }),
+    // brandItemId: a brand social group; its links (and custom icons) replace `items` at render.
+    z.object({ ...base, type: z.literal('social'), items: z.array(z.object({ network: z.string().max(32), href: z.string().max(2048) })).max(12), brandItemId: z.uuid().optional() }),
     z.object({ ...base, type: z.literal('html'), html: z.string().max(200_000) }),
     z.object({ ...base, type: z.literal('product'), feedId: z.uuid(), limit: z.number().int().min(1).max(24).optional(), mode: z.enum(PRODUCT_MODES).optional(), category: z.string().max(100).optional() }),
     z.object({ ...base, type: z.literal('coupon'), poolId: z.uuid() }),

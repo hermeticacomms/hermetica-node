@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, Id, Purpose, PageQuery, Timestamp, pageResult } from './common.ts';
+import { Channel, Id, Purpose, PageQuery, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { Block, BlockDoc } from './content-blocks.ts';
 import { LintResult } from './content-library.ts';
 
@@ -22,6 +22,11 @@ export const TemplateVersionInput = z.object({
   preheader: z.string().max(500).nullable().default(null),
   fromNameOverride: z.string().max(200).nullable().default(null),
   textBody: z.string().max(100_000).nullable().default(null),
+  /** Sender defaults carried by the template; a campaign or journey step that sets its own wins. */
+  fromEmail: z.email().max(320).nullable().optional(),
+  replyTo: ReplyToList.nullable().optional(),
+  /** Copy addresses. Honoured on transactional sends only: a copy shares the recipient's personal content and never consented. */
+  cc: z.array(z.email().max(320)).max(10).optional(),
 });
 export type TemplateVersionInput = z.infer<typeof TemplateVersionInput>;
 
@@ -30,11 +35,12 @@ export const TemplateVersionDto = z.object({
   subject: z.string().nullable(), preheader: z.string().nullable(), fromNameOverride: z.string().nullable(), textBody: z.string().nullable(),
   approvalStatus: z.enum(['none', 'pending', 'approved', 'rejected']), reviewComment: z.string().nullable(),
   createdBy: z.string().nullable(), createdAt: Timestamp, approvedBy: z.string().nullable(), approvedAt: Timestamp.nullable(),
+  fromEmail: z.string().nullable().default(null), replyTo: z.string().nullable().default(null), cc: z.array(z.string()).default([]),
 });
 
 export const TemplateDto = z.object({
   id: Id, workspaceId: Id, channel: Channel, name: z.string(), kind: TemplateKind, folder: z.string().nullable(), tags: z.array(z.string()),
-  currentVersionId: Id.nullable(), archived: z.boolean(), folderId: Id.nullable(), brandKitId: Id.nullable(), isDefault: z.boolean().default(false), topicId: Id.nullable().default(null), createdAt: Timestamp, updatedAt: Timestamp,
+  currentVersionId: Id.nullable(), archived: z.boolean(), folderId: Id.nullable(), brandKitId: Id.nullable(), isDefault: z.boolean().default(false), topicId: Id.nullable().default(null), createdBy: z.string().nullable().default(null), createdAt: Timestamp, updatedAt: Timestamp,
 });
 export const TemplateWithVersion = TemplateDto.extend({ currentVersion: TemplateVersionDto.nullable() });
 
@@ -62,8 +68,23 @@ export const UpdateTemplateBody = z.object({
 export const ListTemplatesQuery = PageQuery.extend({
   channel: Channel.optional(), folder: z.string().optional(), folderId: Id.optional(), tag: z.string().max(64).optional(), q: z.string().max(200).optional(),
   archived: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
+  /** Actor id of the creator (a user id, or `me` for the caller). */
+  createdBy: z.string().max(128).optional(),
+  kind: TemplateKind.optional(),
+  createdAfter: Timestamp.optional(), createdBefore: Timestamp.optional(),
+  sort: z.enum(['newest', 'oldest', 'name', 'name_desc', 'updated']).default('newest'),
 });
 export const TemplatePage = pageResult(TemplateDto);
+
+/** Apply one change to many templates. Tags: `tags` replaces, `addTags` / `removeTags` edit. */
+export const BulkUpdateTemplatesBody = z.object({
+  ids: z.array(Id).min(1).max(100),
+  patch: z.object({
+    folderId: Id.nullable(), archived: z.boolean(), brandKitId: Id.nullable(), topicId: Id.nullable(),
+    tags: z.array(z.string().max(64)).max(50), addTags: z.array(z.string().max(64)).max(50), removeTags: z.array(z.string().max(64)).max(50),
+  }).partial().refine((p) => Object.keys(p).length > 0, 'Nothing to change'),
+});
+export const BulkUpdateTemplatesResult = z.object({ updated: z.number().int(), failed: z.array(z.object({ id: Id, reason: z.string() })) });
 export const TemplateVersionPage = pageResult(TemplateVersionDto);
 
 export const PreviewBody = z.object({
@@ -144,13 +165,22 @@ export const TranslateVariantResult = z.object({
 });
 
 /** Real-client rendering previews (Litmus / Email on Acid style) through a per-workspace connection. */
-export const QaPreviewConnectionBody = z.object({ vendor: z.string().min(1).max(32), name: z.string().trim().min(1).max(100), apiKey: z.string().min(1).max(500).optional() });
+export const QaPreviewConnectionBody = z.object({ vendor: z.string().min(1).max(32), name: z.string().trim().min(1).max(100), apiKey: z.string().min(1).max(500).optional(),
+  /** Second credential for vendors that need one (Email on Acid: the account password). */
+  apiSecret: z.string().min(1).max(500).optional() });
 export const QaPreviewConnectionDto = z.object({
   configured: z.boolean(), vendor: z.string().nullable(), name: z.string().nullable(),
   /** Vendors this server has an adapter for. */
   vendors: z.array(z.string()),
 });
-export const ClientPreviewStartBody = z.object({ versionId: Id.optional() });
+export const ClientPreviewStartBody = z.object({ versionId: Id.optional(), clients: z.array(z.string().min(1).max(100)).max(100).optional() });
+export const PreviewClientDto = z.object({ id: z.string(), name: z.string(), platform: z.enum(['web', 'desktop', 'mobile']), defaultSelected: z.boolean() });
+export const PreviewClientsDto = z.object({ clients: z.array(PreviewClientDto), credits: z.object({ remaining: z.number(), resetsAt: z.string().nullable() }).nullable() });
+export const ClientPreviewRunDto = z.object({
+  id: Id, templateId: Id, versionId: Id.nullable(), vendor: z.string(), externalId: z.string(), clients: z.array(z.string()), status: z.enum(['pending', 'done', 'failed']),
+  shots: z.array(z.object({ client: z.string(), url: z.string() })), error: z.string().nullable(), createdBy: z.string().nullable(), createdAt: Timestamp,
+});
+export const ClientPreviewRunList = z.object({ items: z.array(ClientPreviewRunDto) });
 export const ClientPreviewStart = z.object({ externalId: z.string() });
 export const ClientPreviewResult = z.object({
   status: z.enum(['pending', 'done', 'failed']), error: z.string().optional(),

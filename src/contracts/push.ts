@@ -106,6 +106,8 @@ export const PushStatsQuery = z.object({ from: z.coerce.date().optional(), to: z
 export const PushStatsDto = z.object({
   sent: z.number().int(), delivered: z.number().int(), failed: z.number().int(), blocked: z.number().int(), opened: z.number().int(),
   invalidTokens: z.number().int(), blockReasons: z.array(z.object({ reason: z.string(), count: z.number().int() })),
+  /** Reported by the mobile SDK (`$received_push` / `$converted_push`), counted once per message. */
+  sdkDelivered: z.number().int().optional(), converted: z.number().int().optional(),
 });
 export type PushStatsDto = z.infer<typeof PushStatsDto>;
 

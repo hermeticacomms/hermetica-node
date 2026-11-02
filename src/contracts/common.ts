@@ -15,7 +15,8 @@ export const pageResult = <T extends z.ZodType>(item: T) => z.object({ items: z.
 export const ReplyToList = z.string().trim().max(1000).refine((v) => { const p = v.split(',').map((x) => x.trim()); return p.length <= 5 && p.every((x) => z.email().safeParse(x).success); }, { message: 'Enter up to 5 valid email addresses separated by commas' });
 
 export const Timestamp = z.iso.datetime({ offset: true });
-export const Channel = z.enum(['email', 'sms', 'whatsapp', 'push']);
+/** `postcard`: printed mail through a bring-your-own print vendor; the destination is the profile (its postal address is read at send time). */
+export const Channel = z.enum(['email', 'sms', 'whatsapp', 'push', 'postcard']);
 /** Channels whose address is a phone number (E.164). */
 export const isPhoneChannel = (c: Channel): boolean => c === 'sms' || c === 'whatsapp';
 export type Channel = z.infer<typeof Channel>;

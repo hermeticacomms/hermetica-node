@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Id, PageQuery, Timestamp, pageResult } from './common.ts';
+import { NoteDto } from './identity.ts';
 import { LeadCriteria } from './leads.ts';
 import { ClientQuotaBody } from './platform-admin.ts';
 import { SequenceSettings } from './outbound.ts';
@@ -53,6 +54,8 @@ export const X10SpendParams = z.object({ id: Id, spendId: Id });
 // ---- company notes, lists, merge, sourcing -----------------------------------------------------------------------
 export const X10NoteBody = z.object({ body: z.string().trim().min(1).max(5000) });
 export const X10NoteDto = z.object({ id: Id, companyId: Id, body: z.string(), authorId: z.string(), createdAt: Timestamp });
+/** `/v1/notes/:id`: a contact note or a company note, told apart by `resource`. */
+export const NoteByIdDto = z.discriminatedUnion('resource', [NoteDto.extend({ resource: z.literal('contact') }), X10NoteDto.extend({ resource: z.literal('company') })]);
 export const X10AllNotesQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), before: Id.optional() });
 export const X10AllNotesDto = z.object({ items: z.array(z.object({ id: Id, resource: z.enum(['contact', 'company']), resourceId: Id, body: z.string(), authorId: z.string(), at: Timestamp })), nextBefore: Id.nullable() });
 export const X10NoteParams = z.object({ id: Id, noteId: Id });

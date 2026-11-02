@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { Timestamp } from './common.ts';
 
-export const USAGE_METRICS = ['sends_email', 'sends_sms', 'sends_whatsapp', 'sends_push', 'ai_tokens'] as const;
+export const USAGE_METRICS = ['sends_email', 'sends_sms', 'sends_whatsapp', 'sends_push', 'sends_postcard', 'ai_tokens'] as const;
 export const UsageMetric = z.enum(USAGE_METRICS);
 export type UsageMetric = z.infer<typeof UsageMetric>;
 
 /** null = unlimited. */
 const Limit = z.number().int().nonnegative().nullable();
-export const PlanLimits = z.object({ sends_email: Limit, sends_sms: Limit, sends_whatsapp: Limit, sends_push: Limit, ai_tokens: Limit, seats: Limit });
+export const PlanLimits = z.object({ sends_email: Limit, sends_sms: Limit, sends_whatsapp: Limit, sends_push: Limit, sends_postcard: Limit, ai_tokens: Limit, seats: Limit });
 export type PlanLimits = z.infer<typeof PlanLimits>;
 
 export const PlanDto = z.object({ id: z.string(), name: z.string(), limits: PlanLimits });

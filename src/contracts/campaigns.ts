@@ -4,10 +4,11 @@ import { AbTestConfig } from './experiments.ts';
 import { PushTestTarget } from './push.ts';
 import { MetricCounts, AvailabilityMap } from './analytics.ts';
 
-export const CampaignStatus = z.enum(['draft', 'scheduled', 'sending', 'paused', 'completed', 'cancelled']);
+/** `failed`: fan-out errored out after its retries; nothing more is sent (messages already queued still go). */
+export const CampaignStatus = z.enum(['draft', 'scheduled', 'sending', 'paused', 'completed', 'cancelled', 'failed']);
 export type CampaignStatus = z.infer<typeof CampaignStatus>;
 
-export const CampaignAction = z.enum(['schedule', 'unschedule', 'start', 'pause', 'resume', 'complete', 'cancel']);
+export const CampaignAction = z.enum(['schedule', 'unschedule', 'start', 'pause', 'resume', 'complete', 'cancel', 'fail']);
 export type CampaignAction = z.infer<typeof CampaignAction>;
 
 export const CampaignAudience = z.object({
@@ -17,6 +18,11 @@ export const CampaignAudience = z.object({
   excludeListIds: z.array(Id).max(50).default([]),
   /** Send to one contact per company (the lowest profile id); people without a company are all kept. */
   onePerCompany: z.boolean().optional(),
+  /** Everyone in the workspace (not deleted or archived); exclusions still apply. */
+  everyone: z.boolean().optional(),
+  /** People carrying any of these profile tags (by name, as everywhere in the tag API). */
+  includeTags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  excludeTags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
 });
 export type CampaignAudience = z.infer<typeof CampaignAudience>;
 
@@ -31,6 +37,10 @@ export const CampaignSchedule = z.object({
   window: z.object({ startMin: Minutes, endMin: Minutes }).optional(),
   /** `optimized`: each recipient's own best hour (T6.4) within 24 h of `at`; falls back to the workspace best hour. Ignores throttle. */
   sendTime: z.enum(['fixed', 'optimized']).default('fixed'),
+  /** Recipient-local sends: where the local time has already passed, send `immediately` (default) or at that time `tomorrow`. */
+  pastZones: z.enum(['immediately', 'tomorrow']).optional(),
+  /** Recipients frozen and sent per fan-out transaction (default 100). Smaller batches hold locks for less time. */
+  batchSize: z.number().int().min(10).max(1000).optional(),
 });
 export type CampaignSchedule = z.infer<typeof CampaignSchedule>;
 
@@ -65,6 +75,10 @@ export type CampaignAutoPause = z.infer<typeof CampaignAutoPause>;
 /** Archive page path segment: `/p/a/<list>/<slug>`. */
 export const CampaignSlug = z.string().min(1).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'lowercase letters, digits and dashes');
 
+/** Review drafts nobody decided within `hours` of fan-out are sent (consent and suppression still apply) or skipped. */
+export const ReviewDeadline = z.object({ hours: z.number().int().min(1).max(720), action: z.enum(['send', 'skip']) });
+export type ReviewDeadline = z.infer<typeof ReviewDeadline>;
+
 export const CreateCampaignBody = z.object({
   name: z.string().trim().min(1).max(200),
   channel: Channel,
@@ -85,6 +99,9 @@ export const CreateCampaignBody = z.object({
   variants: z.array(VariantInput).max(8).default([]),
   /** Test-then-send: `testPercent` of the audience gets the variants; the winner goes to the rest. */
   abTest: AbTestConfig.nullish(),
+  /** Hold every recipient's message as a draft to review, edit and send (GET /v1/campaigns/:id/drafts). */
+  reviewDrafts: z.boolean().optional(),
+  reviewDeadline: ReviewDeadline.nullish(),
 });
 export type CreateCampaignBody = z.input<typeof CreateCampaignBody>;
 
@@ -105,6 +122,8 @@ export const UpdateCampaignBody = z.object({
   inArchive: z.boolean().optional(),
   variants: z.array(VariantInput).max(8).optional(),
   abTest: AbTestConfig.nullish(),
+  reviewDrafts: z.boolean().optional(),
+  reviewDeadline: ReviewDeadline.nullish(),
 });
 
 /** Planning details, editable at any status. Dates are calendar days; the campaign's real send time is its schedule. */
@@ -153,6 +172,14 @@ export const CampaignDto = z.object({
   contentErasedAt: Timestamp.nullish(),
   /** Free-form counters; `audience` is the frozen audience size once known. */
   stats: z.record(z.string(), z.number()),
+  /** Hidden from the default list; still reportable. */
+  archivedAt: Timestamp.nullish(),
+  /** The campaign this one was made from: a resend's original, or an RSS issue's feed campaign. */
+  parentCampaignId: Id.nullish(),
+  reviewDrafts: z.boolean().optional(),
+  reviewDeadline: ReviewDeadline.nullish(),
+  /** Why fan-out failed (status `failed`). */
+  failureReason: z.string().nullish(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -171,9 +198,20 @@ export const CampaignListQuery = PageQuery.extend({
   /** Created-at range. */
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  scheduledFrom: z.coerce.date().optional(),
+  scheduledTo: z.coerce.date().optional(),
+  updatedFrom: z.coerce.date().optional(),
+  updatedTo: z.coerce.date().optional(),
+  /** Send-time range: when sending started. */
+  sentFrom: z.coerce.date().optional(),
+  sentTo: z.coerce.date().optional(),
+  /** Campaigns sent to this member (they are a frozen recipient). */
+  profileId: Id.optional(),
+  /** `true` lists only archived campaigns; default hides them. */
+  archived: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
   /** `true` lists soft-deleted drafts (for restore). */
   deleted: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
-  sort: z.enum(['created', 'updated', 'name']).default('created'),
+  sort: z.enum(['created', 'updated', 'name', 'scheduled']).default('created'),
   order: z.enum(['asc', 'desc']).default('desc'),
 });
 export type CampaignListQuery = z.infer<typeof CampaignListQuery>;

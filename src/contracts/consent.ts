@@ -3,6 +3,7 @@ import { Channel, Id, Purpose, Timestamp } from './common.ts';
 
 export const ConsentStatus = z.enum(['granted', 'revoked', 'pending_confirmation']);
 export const LegalBasis = z.enum(['consent', 'legitimate_interest', 'contract', 'other']);
+export type LegalBasis = z.infer<typeof LegalBasis>;
 export const ConsentSource = z.enum(['form', 'import', 'api', 'sms_keyword', 'preference_center', 'admin', 'double_opt_in']);
 export const RevocationScope = z.enum(['topic', 'channel', 'all']);
 export const SuppressionReason = z.enum(['unsubscribe', 'hard_bounce', 'complaint', 'stop_keyword', 'manual', 'invalid', 'dnc']);
@@ -97,6 +98,8 @@ export const TopicDto = z.object({
   groupId: Id.nullable().optional(),
   position: z.number().int().optional(),
   createdAt: Timestamp,
+  /** With ?counts=true: people with granted consent on this topic. */
+  subscriberCount: z.number().int().optional(),
 });
 
 /** Interest category: groups topics with a display type for the preference centre. */

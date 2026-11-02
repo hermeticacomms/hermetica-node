@@ -21,6 +21,7 @@ export const UsagePeriodDto = z.object({
   sends_sms: z.number().int(),
   sends_whatsapp: z.number().int(),
   sends_push: z.number().int(),
+  sends_postcard: z.number().int(),
   ai_tokens: z.number().int(),
 });
 export const UsageHistoryQuery = z.object({ months: z.coerce.number().int().min(1).max(36).default(12) });
@@ -36,6 +37,8 @@ export const AccountExportDto = z.object({
   datasets: z.record(z.string(), z.number().int()), createdAt: Timestamp, finishedAt: Timestamp.nullable(),
   /** Authenticated GET that streams the zip; null until completed. */
   downloadPath: z.string().nullable(),
+  /** What was asked for: dataset names (absent = all) and the since-date. */
+  options: z.object({ datasets: z.array(z.string()).optional(), since: z.string().optional() }).optional(),
 });
 
 // ---- OAuth 2.0 (authorization code + PKCE S256) ----
@@ -88,3 +91,12 @@ export type UsagePeriodDto = z.infer<typeof UsagePeriodDto>;
 export type InvoiceDto = z.infer<typeof InvoiceDto>;
 export type ClientQuota = z.infer<typeof ClientQuotaBody>;
 export type WebhookTopicDto = z.infer<typeof WebhookTopicDto>;
+
+export const ACCOUNT_EXPORT_DATASETS = ['profiles', 'segments', 'campaigns', 'templates', 'workflows', 'forms', 'suppressions', 'events', 'lists'] as const;
+export const AccountExportBody = z.object({
+  /** Empty or absent = every dataset. */
+  datasets: z.array(z.enum(ACCOUNT_EXPORT_DATASETS)).max(20).optional(),
+  /** Only rows created at or after this time. */
+  since: Timestamp.optional(),
+});
+export const AccountExportListQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(25), cursor: z.uuid().optional() });

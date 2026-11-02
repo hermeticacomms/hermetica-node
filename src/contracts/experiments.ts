@@ -111,13 +111,15 @@ export const FrequencySettingsDto = Row;
 export const FrequencySettingsList = z.object({ items: z.array(FrequencySettingsDto) });
 
 export const SendTimeRecommendation = z.object({ profileId: Id, hour: z.number().int().min(0).max(23), source: z.enum(['profile', 'workspace', 'default']), at: Timestamp });
+/** `new_subscribers`: people in the audience now who were not sent the original; `non_purchasers`: recipients with no attributed order. */
 export const ResendBody = z.object({
-  to: z.enum(['non_openers', 'non_clickers']),
+  to: z.enum(['non_openers', 'non_clickers', 'new_subscribers', 'non_purchasers']),
   subject: z.string().trim().min(1).max(998),
   at: z.coerce.date().optional(),
 });
 export const AbTestConfig = z.object({
-  testPercent: z.number().int().min(1).max(50).default(20),
+  /** 100 = everyone gets a variant and you pick the winner by hand (nothing is held back). */
+  testPercent: z.number().int().min(1).max(100).default(20),
   metric: PrimaryMetric.default('clicks'),
   waitHours: z.number().int().min(1).max(48).default(4),
   auto: z.boolean().default(true),
@@ -125,3 +127,17 @@ export const AbTestConfig = z.object({
 });
 export type AbTestConfig = z.infer<typeof AbTestConfig>;
 export const RolloutBody = z.object({ winnerKey: z.string().min(1).max(32).optional() });
+
+/** Multivariate: every combination of the listed values becomes one variant (at most 8). An empty dimension keeps the base value. */
+export const MultivariateGridBody = z.object({
+  templateVersionIds: z.array(Id).max(8).default([]),
+  subjects: z.array(z.string().trim().min(1).max(998)).max(8).default([]),
+  fromNames: z.array(z.string().trim().min(1).max(200)).max(8).default([]),
+  previewTexts: z.array(z.string().trim().min(1).max(300)).max(8).default([]),
+  /** Used where `templateVersionIds` is empty. */
+  baseTemplateVersionId: Id,
+});
+export const MultivariateGridResult = z.object({
+  combinations: z.number().int(),
+  variants: z.array(z.object({ key: z.string(), templateVersionId: z.string(), subject: z.string().nullable(), fromName: z.string().nullable(), previewText: z.string().nullable() })),
+});

@@ -20,8 +20,17 @@ export const EventExplorerQuery = PageQuery.extend({
   to: Timestamp.optional(),
   /** JSON-encoded PropertyCondition[] (query strings carry no arrays). */
   filter: z.string().max(4000).optional(),
+  /** By when it happened: `datetime` oldest first, `-datetime` newest first. Default: newest received first. */
+  sort: z.enum(['datetime', '-datetime']).optional(),
+  /** Comma separated: `metric` (the event's definition) and/or `profile` (who did it). */
+  include: z.string().max(40).regex(/^(metric|profile)(,(metric|profile))?$/, 'include takes metric and/or profile').optional(),
+  /** Only events from messages of this journey, or of this broadcast (campaign). */
+  journeyId: Id.optional(),
+  broadcastId: Id.optional(),
 });
 export const EventExplorerPage = pageResult(EventRecord);
+/** Matching events as CSV text (first 50,000). */
+export const EventExportResult = z.object({ filename: z.string(), csv: z.string(), count: z.number().int(), truncated: z.boolean() });
 
 // ---- metrics -----------------------------------------------------------------------------------------------------------
 export const MetricSummary = z.object({

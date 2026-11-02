@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Attributes, Channel, Id, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { LegalBasis } from './consent.ts';
 
 const str = z.string().max(256).nullable();
 
@@ -22,6 +23,11 @@ export const ProfileIdentifiersInput = z.object({
   anonymousId: z.string().min(1).max(256).optional(),
 });
 
+/** Contact form: set email / SMS marketing subscription. `subscribed` is recorded in the consent ledger (source admin, the editor as evidence) and is ignored for someone who unsubscribed before; `unsubscribed` revokes and suppresses. */
+export const ContactSubscription = z.enum(['subscribed', 'unsubscribed']);
+export const ContactSubscriptions = z.object({ email: ContactSubscription.optional(), sms: ContactSubscription.optional(), legalBasis: LegalBasis.optional() });
+const contactExtras = { subscriptions: ContactSubscriptions.optional(), tags: z.array(z.string().trim().min(1).max(64)).max(100).optional() };
+
 export const UpsertProfileBody = z.object({
   identifiers: ProfileIdentifiersInput,
   attributes: Attributes.optional(),
@@ -31,9 +37,10 @@ export const UpsertProfileBody = z.object({
   matchAttribute: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).optional(),
   /** `true` opts the contact out of marketing email (consent revoked, address suppressed). There is no `false`: only the person can opt back in, through a consent form. */
   unsubscribed: z.literal(true).optional(),
+  ...contactExtras,
 });
 
-export const UpdateProfileBody = StandardFieldsInput.extend({ attributes: Attributes.optional() });
+export const UpdateProfileBody = StandardFieldsInput.extend({ attributes: Attributes.optional(), ...contactExtras });
 
 export const ProfileDto = z.object({
   id: Id,
@@ -55,6 +62,8 @@ export const ProfileDto = z.object({
   archivedAt: Timestamp.nullish(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
+  /** Contact form only: channels whose `subscribed` was not recorded because the person unsubscribed before (only they can opt back in). */
+  consentIgnored: z.array(Channel).optional(),
 });
 export const ProfilePage = pageResult(ProfileDto);
 
@@ -114,7 +123,9 @@ export const ProfileCount = z.object({ count: z.number().int() });
 export const ProfileListMembership = z.object({ id: Id, name: z.string() });
 export const ProfileMemberships = z.object({ lists: z.array(ProfileListMembership), segments: z.array(ProfileListMembership) });
 
-export const ListSizeHistoryQuery = z.object({ days: z.coerce.number().int().min(2).max(365).default(30) });
+/** Last `days` days, or the window `from`..`to` (both dates, at most 366 days) when given. */
+export const ListSizeHistoryQuery = z.object({ days: z.coerce.number().int().min(2).max(365).default(30), from: z.iso.date().optional(), to: z.iso.date().optional() })
+  .refine((q) => !q.from === !q.to, 'Give both from and to, or neither');
 export const ListSizeHistory = z.object({ items: z.array(z.object({ day: z.string(), size: z.number().int(), added: z.number().int().default(0), removed: z.number().int().default(0) })) });
 export const MembershipsBatchBody = z.object({ profileIds: z.array(Id).min(1).max(100) });
 export const MembershipsBatchResult = z.object({ items: z.array(z.object({ profileId: Id }).extend(ProfileMemberships.shape)) });
@@ -178,12 +189,21 @@ export const ListSettings = z.object({
   publicDirectory: z.boolean().optional(),
   /** Temporary list: from this instant it behaves as archived (no new members, not targetable, hidden from the public directory). Empty string clears it. */
   expiresAt: z.union([z.iso.datetime({ offset: true }), z.literal('')]).optional(),
+  /** Exclusion list: its members are left out of every campaign, whatever the campaign targets. */
+  exclusion: z.boolean().optional(),
+  /** Default mailer for campaigns to this list: a connection or a pool (a campaign's own route wins). Empty clears it. */
+  defaultConnectionId: z.union([z.uuid(), z.literal('')]).optional(),
+  defaultPoolId: z.union([z.uuid(), z.literal('')]).optional(),
 });
 export type ListSettings = z.infer<typeof ListSettings>;
 export const CreateListBody = z.object({ name: z.string().min(1).max(200), description: z.string().max(2000).nullable().optional(), settings: ListSettings.optional(), folderId: Id.nullable().optional() });
 export const UpdateListBody = CreateListBody.partial();
 export const ListDto = z.object({ id: Id, name: z.string(), description: z.string().nullable(), kind: z.string(), settings: ListSettings, tags: z.array(z.string()).optional(), folderId: Id.nullable().optional(), createdAt: Timestamp });
-export const ListWithCount = ListDto.extend({ memberCount: z.number().int() });
+/** Mailchimp-style list stats over the last 365 days of marketing sends (rates are 0..1 of delivered). */
+export const ListStats = z.object({
+  sent: z.number().int(), openRate: z.number(), clickRate: z.number(), unsubscribed: z.number().int(), cleaned: z.number().int(), lastSentAt: z.string().nullable(),
+});
+export const ListWithCount = ListDto.extend({ memberCount: z.number().int(), stats: ListStats.optional() });
 export const ListMembersBody = z.object({ profileIds: z.array(Id).min(1).max(1000) });
 export const ListMembersResult = z.object({ changed: z.array(Id) });
 /** Free-form data stored on one person's membership of one list (for example a plan or a table number). */
