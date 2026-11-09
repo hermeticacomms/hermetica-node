@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { Channel, Id, Purpose, Timestamp } from './common.ts';
+import { AppSlug, Channel, DateTimeIn, Id, Purpose, Timestamp, patchOf } from './common.ts';
 
 export const ConsentStatus = z.enum(['granted', 'revoked', 'pending_confirmation']);
 export const LegalBasis = z.enum(['consent', 'legitimate_interest', 'contract', 'other']);
 export type LegalBasis = z.infer<typeof LegalBasis>;
-export const ConsentSource = z.enum(['form', 'import', 'api', 'sms_keyword', 'preference_center', 'admin', 'double_opt_in']);
+export const ConsentSource = z.enum(['form', 'import', 'api', 'sms_keyword', 'preference_center', 'admin', 'double_opt_in', 'instagram_dm', 'facebook_dm']);
 export const RevocationScope = z.enum(['topic', 'channel', 'all']);
 export const SuppressionReason = z.enum(['unsubscribe', 'hard_bounce', 'complaint', 'stop_keyword', 'manual', 'invalid', 'dnc']);
 export const SuppressionScope = z.enum(['global', 'topic', 'purpose']);
@@ -37,7 +37,7 @@ export const ConsentInputBody = z.object({
   ip: z.string().max(64).nullish(),
   userAgent: z.string().max(512).nullish(),
   proof: z.record(z.string(), z.unknown()).nullish(),
-  expiresAt: z.coerce.date().nullish(),
+  expiresAt: DateTimeIn().nullish(),
   revocationScope: RevocationScope.nullish(),
 });
 export type ConsentInputBody = z.input<typeof ConsentInputBody>;
@@ -72,6 +72,8 @@ export const ConsentStateDto = z.object({
   recordId: Id,
   expiresAt: Timestamp.nullable(),
   updatedAt: Timestamp,
+  /** Source of the record behind this state (form, double_opt_in, api, ...). */
+  source: z.string().nullable().optional(),
 });
 
 export const TopicInput = z.object({
@@ -83,9 +85,12 @@ export const TopicInput = z.object({
   visibleInPreferenceCenter: z.boolean().default(true),
   groupId: Id.nullish(),
   position: z.number().int().min(0).max(10_000).optional(),
+  /** Product that owns the topic (null = shared). Keys stay workspace-unique, so still prefix them across products. */
+  app: AppSlug.nullish(),
 });
 export type TopicInput = z.input<typeof TopicInput>;
-export const TopicPatch = TopicInput.omit({ channel: true, key: true }).partial();
+// Without defaults: zod 4 `.partial()` keeps them, so patching only the name would flip defaultOptIn back to false.
+export const TopicPatch = TopicInput.omit({ channel: true, key: true }).extend({ defaultOptIn: z.boolean().optional(), visibleInPreferenceCenter: z.boolean().optional() }).partial();
 export type TopicPatch = z.infer<typeof TopicPatch>;
 export const TopicDto = z.object({
   id: Id,
@@ -97,7 +102,9 @@ export const TopicDto = z.object({
   visibleInPreferenceCenter: z.boolean(),
   groupId: Id.nullable().optional(),
   position: z.number().int().optional(),
+  app: z.string().nullable().optional(),
   createdAt: Timestamp,
+  archivedAt: Timestamp.nullable().optional(),
   /** With ?counts=true: people with granted consent on this topic. */
   subscriberCount: z.number().int().optional(),
 });
@@ -109,7 +116,7 @@ export const TopicGroupBody = z.object({
   position: z.number().int().min(0).max(10_000).default(0),
 });
 export type TopicGroupBody = z.infer<typeof TopicGroupBody>;
-export const TopicGroupPatch = TopicGroupBody.partial();
+export const TopicGroupPatch = patchOf(TopicGroupBody);
 export const TopicGroupDto = z.object({ id: Id, name: z.string(), displayType: z.string(), position: z.number().int(), topicCount: z.number().int().optional(), createdAt: Timestamp });
 
 export const SuppressionInput = z.object({
@@ -146,8 +153,8 @@ export const SuppressionListQuery = z.object({
   /** Email domain (e.g. example.com); email suppressions only. */
   domain: z.string().trim().toLowerCase().min(1).max(253).optional(),
   /** Created on/after, before. */
-  createdFrom: z.coerce.date().optional(),
-  createdTo: z.coerce.date().optional(),
+  createdFrom: DateTimeIn().optional(),
+  createdTo: DateTimeIn().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: Id.optional(),
 });
@@ -165,7 +172,8 @@ export const EligibilityRequest = z.object({
   recipientCountry: z.string().length(2).optional(),
 });
 export type EligibilityRequest = z.infer<typeof EligibilityRequest>;
-export const Eligibility = z.object({ eligible: z.boolean(), reasons: z.array(BlockReason) });
+/** `liaId`: the legitimate-interest assessment that lifted this prospecting send's jurisdiction block. */
+export const Eligibility = z.object({ eligible: z.boolean(), reasons: z.array(BlockReason), liaId: z.string().optional() });
 export type Eligibility = z.infer<typeof Eligibility>;
 
 /** Workspace-wide opt-outs (latest consent state revoked), filterable by channel and topic. */
@@ -177,5 +185,18 @@ export const OptoutDto = z.object({ profileId: z.uuid(), channel: Channel, purpo
 export const OptoutPage = z.object({ items: z.array(OptoutDto), total: z.number().int() });
 
 /** Clear hard-bounce suppressions in a date range (or one address); admin only, audited with the reason. */
-export const BounceLiftBody = z.object({ startDate: z.coerce.date().optional(), endDate: z.coerce.date().optional(), email: z.string().max(320).optional(), reason: z.string().min(1).max(500) });
+export const BounceLiftBody = z.object({ startDate: DateTimeIn().optional(), endDate: DateTimeIn().optional(), email: z.string().max(320).optional(), reason: z.string().min(1).max(500) });
 export const BounceLiftResult = z.object({ lifted: z.number().int() });
+
+/** Legitimate-interest assessment (D-OUT-29): unlocks prospecting to the listed default-blocked countries until revoked. */
+export const LiaInput = z.object({
+  purpose: z.string().trim().min(10).max(4000),
+  balancingTest: z.string().trim().min(10).max(8000),
+  optOutWording: z.string().trim().min(5).max(1000),
+  countries: z.array(z.string().length(2)).min(1).max(40),
+});
+export const LiaDto = z.object({
+  id: Id, purpose: z.string(), balancingTest: z.string(), optOutWording: z.string(), countries: z.array(z.string()),
+  assessedBy: Id.nullable(), revokedAt: Timestamp.nullable(), createdAt: Timestamp,
+});
+export const LiaList = z.object({ items: z.array(LiaDto), blockedCountries: z.array(z.string()), unlockableCountries: z.array(z.string()) });

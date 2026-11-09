@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BlockDoc } from './content-blocks.ts';
-import { Channel, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { Channel, DateTimeIn, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { PushExtras } from './push.ts';
 import { PostcardDesign } from './postcards.ts';
 
@@ -55,7 +55,7 @@ export const SendRequest = z.object({
   push: PushExtras.optional(),
   idempotencyKey: z.string().min(1).max(200),
   topicId: Id.optional(),
-  scheduledFor: z.coerce.date().optional(),
+  scheduledFor: DateTimeIn().optional(),
   vars: z.record(z.string(), z.unknown()).optional(),
   tracking: z.object({ clicks: z.boolean().optional(), opens: z.boolean().optional() }).optional(),
   /** Campaign-level UTM defaults, appended to http(s) links that carry no utm_* yet. */
@@ -124,14 +124,18 @@ export const SendRequest = z.object({
   strictLiquid: z.boolean().optional(),
   /** The list a campaign send goes to: its default mailer is tried after the request's own route. */
   listId: Id.optional(),
+  /** Set by the server only, on test sends to the operator's own seed addresses: skips quiet hours (consent, suppression and caps still apply). */
+  testSend: z.boolean().optional(),
 }).refine((r) => (r.channel === 'postcard' ? !!r.postcard && !r.templateId && !r.inline : Boolean(r.templateId) !== Boolean(r.inline)), { message: 'Provide exactly one of templateId or inline (postcards: the postcard design only)' })
-  .refine((r) => Boolean(r.route.connectionId || r.route.poolId || r.route.routePolicyId), { message: 'route needs connectionId, poolId or routePolicyId' });
+  .refine((r) => Boolean(r.route.connectionId || r.route.poolId || r.route.routePolicyId), { message: 'No route: pick a sending connection, pool or route policy (route.connectionId, route.poolId or route.routePolicyId)', path: ['route'] });
 export type SendRequest = z.infer<typeof SendRequest>;
 
 export const SendOutcome = z.object({
   jobId: Id,
   status: z.enum(['queued', 'blocked', 'deferred', 'duplicate']),
   reason: z.string().optional(),
+  /** `render_error`: what failed, e.g. the merge variable the send's vars leave unset. */
+  detail: z.string().optional(),
 });
 export type SendOutcome = z.infer<typeof SendOutcome>;
 
@@ -146,7 +150,7 @@ export const SendApiBody = z.object({
   /** Either this or the `Idempotency-Key` header (header wins when the body omits it; both must agree). */
   idempotencyKey: z.string().min(1).max(200).optional(),
   topicId: Id.optional(),
-  scheduledFor: z.coerce.date().optional(),
+  scheduledFor: DateTimeIn().optional(),
   vars: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -170,8 +174,8 @@ export const MessageListQuery = PageQuery.extend({
   senderIdentityId: Id.optional(),
   templateId: Id.optional(),
   channel: Channel.optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: DateTimeIn().optional(),
+  to: DateTimeIn().optional(),
   /** Event / trigger properties passed as send vars: `path:value` pairs (dots walk objects, e.g. `trigger.orderId:123`), comma separated; all must match. */
   vars: z.string().max(500).optional(),
   /** Only messages that have at least one event of this kind (open, click, delivered, hard_bounce, ...). */
@@ -179,7 +183,7 @@ export const MessageListQuery = PageQuery.extend({
 });
 
 /** One policy stage of the send pipeline (destination, eligibility, caps, route, render, reserve, send, events). */
-export const DecisionEntry = z.object({ stage: z.string(), outcome: z.enum(['allow', 'block', 'defer']), reason: z.string().nullish(), at: Timestamp.nullish() });
+export const DecisionEntry = z.object({ stage: z.string(), outcome: z.enum(['allow', 'block', 'defer']), reason: z.string().nullish(), liaId: z.string().nullish(), at: Timestamp.nullish() });
 export const MessageJobDto = z.object({
   id: Id,
   idempotencyKey: z.string(),

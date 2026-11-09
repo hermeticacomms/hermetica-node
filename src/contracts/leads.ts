@@ -19,6 +19,8 @@ export const ConnectLeadProviderBody = z.object({
 export const LeadProviderDto = z.object({
   id: Id, kind: LeadProviderKind, role: z.enum(['finder', 'verifier', 'phone']), name: z.string(), priority: z.number().int(), enabled: z.boolean(),
   creditsUsed: z.number().int(), creditLimit: z.number().int().nullable(), createdAt: Timestamp,
+  keyVerified: z.boolean().nullable().describe('true: the provider accepted the key at the last check (on connect or POST /v1/leads/providers/{id}/test). false: rejected, or not checked yet (keyCheckedAt null). null: no key (smtp)'),
+  keyCheckedAt: Timestamp.nullable().optional(), keyError: z.string().nullable().optional(),
 });
 export const UpdateLeadProviderBody = z.object({ enabled: z.boolean().optional(), priority: z.number().int().min(0).max(1000).optional(), creditLimit: z.number().int().min(0).nullable().optional() });
 

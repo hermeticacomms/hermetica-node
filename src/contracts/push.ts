@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, PageQuery, Timestamp, pageResult } from './common.ts';
+import { DateTimeIn, Id, PageQuery, Timestamp, pageResult } from './common.ts';
 
 export const PushPlatform = z.enum(['ios', 'android', 'web']);
 export type PushPlatform = z.infer<typeof PushPlatform>;
@@ -102,7 +102,7 @@ export const PushExtras = z.object({
 });
 export type PushExtras = z.infer<typeof PushExtras>;
 
-export const PushStatsQuery = z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional() });
+export const PushStatsQuery = z.object({ from: DateTimeIn().optional(), to: DateTimeIn().optional() });
 export const PushStatsDto = z.object({
   sent: z.number().int(), delivered: z.number().int(), failed: z.number().int(), blocked: z.number().int(), opened: z.number().int(),
   invalidTokens: z.number().int(), blockReasons: z.array(z.object({ reason: z.string(), count: z.number().int() })),

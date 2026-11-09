@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { Channel, DateTimeIn, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { AbTestConfig } from './experiments.ts';
 import { PushTestTarget } from './push.ts';
 import { MetricCounts, AvailabilityMap } from './analytics.ts';
@@ -10,6 +10,15 @@ export type CampaignStatus = z.infer<typeof CampaignStatus>;
 
 export const CampaignAction = z.enum(['schedule', 'unschedule', 'start', 'pause', 'resume', 'complete', 'cancel', 'fail']);
 export type CampaignAction = z.infer<typeof CampaignAction>;
+
+/** Who smart audience leaves out: any past complaint in `windowDays`, or this many ignored marketing sends (fewer for predicted-lapsed customers). */
+export const SmartAudienceRules = z.object({
+  windowDays: z.number().int().min(14).max(365).optional(), // default 90
+  unengagedSends: z.number().int().min(2).max(50).optional(), // default 5
+  churnRisk: z.number().min(0.5).max(1).optional(), // default 0.8
+  churnedSends: z.number().int().min(1).max(50).optional(), // default 3
+});
+export type SmartAudienceRules = z.infer<typeof SmartAudienceRules>;
 
 export const CampaignAudience = z.object({
   includeSegmentIds: z.array(Id).max(50).default([]),
@@ -23,13 +32,15 @@ export const CampaignAudience = z.object({
   /** People carrying any of these profile tags (by name, as everywhere in the tag API). */
   includeTags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   excludeTags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
+  /** Smart audience thresholds (used when the campaign's smartAudience is on); unset keys keep the defaults. */
+  smart: SmartAudienceRules.optional(),
 });
 export type CampaignAudience = z.infer<typeof CampaignAudience>;
 
 const Minutes = z.number().int().min(0).max(1440);
 export const CampaignSchedule = z.object({
   /** Fixed instant, or (recipientLocal) the wall-clock time read in `tz` and re-applied in each recipient's zone. */
-  at: z.coerce.date(),
+  at: DateTimeIn(),
   tz: z.string().min(1).max(64).default('UTC'),
   recipientLocal: z.boolean().default(false),
   throttlePerHour: z.number().int().min(1).max(1_000_000).optional(),
@@ -37,9 +48,11 @@ export const CampaignSchedule = z.object({
   window: z.object({ startMin: Minutes, endMin: Minutes }).optional(),
   /** `optimized`: each recipient's own best hour (T6.4) within 24 h of `at`; falls back to the workspace best hour. Ignores throttle. */
   sendTime: z.enum(['fixed', 'optimized']).default('fixed'),
+  /** Optimized send time: local hour used for people (and audiences) with no reading history (unset = 10). */
+  fallbackHour: z.number().int().min(0).max(23).optional(),
   /** Recipient-local sends: where the local time has already passed, send `immediately` (default) or at that time `tomorrow`. */
   pastZones: z.enum(['immediately', 'tomorrow']).optional(),
-  /** Recipients frozen and sent per fan-out transaction (default 100). Smaller batches hold locks for less time. */
+  /** Recipients frozen per page and sent per fan-out transaction (default 100; sends commit at most 100 per transaction). Smaller batches hold locks for less time. */
   batchSize: z.number().int().min(10).max(1000).optional(),
 });
 export type CampaignSchedule = z.infer<typeof CampaignSchedule>;
@@ -79,10 +92,13 @@ export const CampaignSlug = z.string().min(1).max(80).regex(/^[a-z0-9]+(?:-[a-z0
 export const ReviewDeadline = z.object({ hours: z.number().int().min(1).max(720), action: z.enum(['send', 'skip']) });
 export type ReviewDeadline = z.infer<typeof ReviewDeadline>;
 
+/** D-SEND-3: a campaign (and every newsletter send, which is a campaign) is bulk mail, so it is never transactional/operational. */
+export const CampaignPurpose = z.enum(['marketing', 'prospecting']);
+
 export const CreateCampaignBody = z.object({
   name: z.string().trim().min(1).max(200),
   channel: Channel,
-  purpose: Purpose.default('marketing'),
+  purpose: CampaignPurpose.default('marketing'),
   audience: CampaignAudience.default({ includeSegmentIds: [], includeListIds: [], excludeSegmentIds: [], excludeListIds: [] }),
   templateId: Id.nullish(),
   route: CampaignRoute.default({}),
@@ -102,13 +118,15 @@ export const CreateCampaignBody = z.object({
   /** Hold every recipient's message as a draft to review, edit and send (GET /v1/campaigns/:id/drafts). */
   reviewDrafts: z.boolean().optional(),
   reviewDeadline: ReviewDeadline.nullish(),
+  /** Smart audience: at send time, leave out people predicted to unsubscribe or complain (past complaint, or long unengaged). */
+  smartAudience: z.boolean().optional(),
 });
 export type CreateCampaignBody = z.input<typeof CreateCampaignBody>;
 
 /** Explicit (no defaults): a PATCH must only touch the fields it names. */
 export const UpdateCampaignBody = z.object({
   name: CreateCampaignBody.shape.name.optional(),
-  purpose: Purpose.optional(),
+  purpose: CampaignPurpose.optional(),
   audience: CampaignAudience.optional(),
   templateId: Id.nullish(),
   route: CampaignRoute.optional(),
@@ -124,6 +142,7 @@ export const UpdateCampaignBody = z.object({
   abTest: AbTestConfig.nullish(),
   reviewDrafts: z.boolean().optional(),
   reviewDeadline: ReviewDeadline.nullish(),
+  smartAudience: z.boolean().optional(),
 });
 
 /** Planning details, editable at any status. Dates are calendar days; the campaign's real send time is its schedule. */
@@ -163,8 +182,11 @@ export const CampaignDto = z.object({
   startsOn: z.string().nullish(),
   endsOn: z.string().nullish(),
   notes: z.string().nullish(),
+  /** not_required | pending | approved | rejected (POST /v1/campaigns/:id/approval/submit|approve|reject). */
   approvalStatus: z.string(),
   approvedBy: z.string().nullable(),
+  approvalSubmittedBy: z.string().nullish(),
+  approvalComment: z.string().nullish(),
   startedAt: Timestamp.nullable(),
   completedAt: Timestamp.nullable(),
   testSentAt: Timestamp.nullable(),
@@ -180,6 +202,7 @@ export const CampaignDto = z.object({
   reviewDeadline: ReviewDeadline.nullish(),
   /** Why fan-out failed (status `failed`). */
   failureReason: z.string().nullish(),
+  smartAudience: z.boolean().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -196,15 +219,15 @@ export const CampaignListQuery = PageQuery.extend({
   tag: z.string().max(80).optional(),
   listId: Id.optional(),
   /** Created-at range. */
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
-  scheduledFrom: z.coerce.date().optional(),
-  scheduledTo: z.coerce.date().optional(),
-  updatedFrom: z.coerce.date().optional(),
-  updatedTo: z.coerce.date().optional(),
+  from: DateTimeIn().optional(),
+  to: DateTimeIn().optional(),
+  scheduledFrom: DateTimeIn().optional(),
+  scheduledTo: DateTimeIn().optional(),
+  updatedFrom: DateTimeIn().optional(),
+  updatedTo: DateTimeIn().optional(),
   /** Send-time range: when sending started. */
-  sentFrom: z.coerce.date().optional(),
-  sentTo: z.coerce.date().optional(),
+  sentFrom: DateTimeIn().optional(),
+  sentTo: DateTimeIn().optional(),
   /** Campaigns sent to this member (they are a frozen recipient). */
   profileId: Id.optional(),
   /** `true` lists only archived campaigns; default hides them. */
@@ -244,7 +267,7 @@ export const SeedListBody = z.object({
 export const SeedListDto = z.object({ id: Id, name: z.string(), emails: z.array(z.string()), phones: z.array(z.string()), createdAt: Timestamp, updatedAt: Timestamp });
 export const SeedListPage = pageResult(SeedListDto);
 
-export const CalendarQuery = z.object({ from: z.coerce.date(), to: z.coerce.date() });
+export const CalendarQuery = z.object({ from: DateTimeIn(), to: DateTimeIn() });
 export const CalendarItem = z.object({
   /** `workflow`: one occurrence of a live workflow's `schedule` (cron) trigger. */
   kind: z.enum(['campaign', 'workflow']),
@@ -266,6 +289,8 @@ export const CampaignReport = z.object({
   byStatus: z.record(z.string(), z.number().int()),
   /** Analytics rollup for this campaign (counts + per-metric availability for its sending connections). */
   analytics: z.object({ totals: MetricCounts, availability: AvailabilityMap }),
+  /** Smart audience: who was left out at freeze time and why (null when the option was off or the audience is not frozen yet). */
+  smartAudience: z.object({ dropped: z.number().int(), /** complained | unengaged | churned_unengaged -> people. */ reasons: z.record(z.string(), z.number().int()) }).nullish(),
 });
 
 export const CampaignInsights = z.object({

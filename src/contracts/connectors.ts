@@ -20,6 +20,10 @@ export const ConnectorList = z.object({ items: z.array(ConnectorDto) });
 
 export const ShopifyInstallQuery = z.object({ shop: z.string().regex(/^[a-z0-9][a-z0-9-]{0,60}\.myshopify\.com$/, 'Use <name>.myshopify.com') });
 export const ShopifyInstallResult = z.object({ url: z.url() });
+/** One-click WooCommerce connect: the store site (https) and, from the WordPress plugin, where WooCommerce should send the merchant back. */
+export const WooConnectQuery = z.object({ site: z.url().max(512), returnUrl: z.url().max(1024).optional() });
+/** What WooCommerce POSTs to the callback after the merchant approves (`user_id` carries our signed state). */
+export const WooConnectCallbackBody = z.object({ key_id: z.number().int().optional(), user_id: z.string().min(1).max(2048), consumer_key: z.string().min(1).max(256), consumer_secret: z.string().min(1).max(256), key_permissions: z.string().max(32).optional() });
 
 export const ShopifyDiscountBody = z.object({
   poolId: Id, count: z.number().int().min(1).max(2000), percentOff: z.number().min(1).max(100),
@@ -40,7 +44,7 @@ export const WarehouseRowsResult = z.object({ applied: z.number().int(), failed:
 /** HubSpot install: each workspace brings its own HubSpot app, so its credentials come with the request (sealed, never echoed). */
 export const HubSpotInstallBody = z.object({
   name: z.string().min(1).max(120), clientId: z.string().min(1).max(200), clientSecret: z.string().min(1).max(200),
-  /** With both, Hermetica registers the contact webhook subscriptions on the app after the install. */
+  /** With both, Hermeticor registers the contact webhook subscriptions on the app after the install. */
   appId: z.string().min(1).max(40).optional(), developerApiKey: z.string().min(1).max(200).optional(),
 });
 export const HubSpotInstallResult = z.object({ connectionId: Id, url: z.url() });

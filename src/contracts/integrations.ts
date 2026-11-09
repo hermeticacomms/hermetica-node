@@ -32,15 +32,20 @@ const Delivery = {
   authHeaders: z.array(WebhookAuthHeader).max(10),
   throttleSeconds: z.number().int().min(0).max(86_400),
   throttleTopics: z.array(WebhookTopicPattern).max(50),
+  /** Consecutive failed attempts before the endpoint is disabled (default 50). */
+  autoDisableAfter: z.number().int().min(1).max(1000),
+  /** Hours one event is retried (doubling backoff, at most 6 h apart) before it is given up (default 24). */
+  retryWindowHours: z.number().int().min(1).max(72),
 };
 
-export const CreateWebhookEndpoint = z.object({ url: Url, topics: Topics, description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional() });
+export const CreateWebhookEndpoint = z.object({ url: Url, topics: Topics, description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(), autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional() });
 export const UpdateWebhookEndpoint = z.object({
   url: Url.optional(),
   topics: Topics.optional(),
   filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(),
   description: z.string().max(500).nullable().optional(),
   bodyTemplate: Delivery.bodyTemplate.nullable().optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(),
+  autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional(),
   /** Re-enabling resets the failure counter. */
   status: z.enum(['active', 'disabled']).optional(),
 });
@@ -55,6 +60,7 @@ export const WebhookEndpointDto = z.object({
   sources: Ids,
   sequenceIds: Ids,
   bodyTemplate: z.string().nullable(), authHeaders: Delivery.authHeaders, throttleSeconds: z.number().int(), throttleTopics: z.array(z.string()),
+  autoDisableAfter: z.number().int().default(50), retryWindowHours: z.number().int().default(24),
   status: z.enum(['active', 'disabled']),
   consecutiveFailures: z.number().int(),
   createdAt: Timestamp,

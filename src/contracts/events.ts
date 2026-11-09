@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, PageQuery, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Id, PageQuery, Timestamp, pageResult } from './common.ts';
 
 export const STANDARD_EVENTS = [
   'page_view', 'page_exit', 'form_view', 'form_submit', 'product_view', 'search',
@@ -35,6 +35,8 @@ export const EventProfileData = EventProfile.extend({
 
 export const IngestEvent = z.object({
   name: EventName,
+  /** Optional product dimension: journey event triggers and segment event conditions can require it. */
+  app: AppSlug.optional(),
   occurredAt: Timestamp.optional(),
   properties: z.record(z.string().max(128), z.unknown()).optional(),
   /** Minor currency units (cents). */
@@ -70,6 +72,8 @@ export const IdentifyBody = z.object({
   identifiers: EventProfile,
   traits: z.record(z.string().max(128), z.unknown()).optional(),
   consent: BatchConsent.optional(),
+  /** Signed identify: hex HMAC-SHA256 of the identity (externalId, else email, else phone) with the site's identity secret, made on your server. */
+  signature: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 export const IdentifyResult = z.object({ profileId: Id, created: z.boolean() });
 
@@ -139,6 +143,48 @@ export const CreateSiteConfig = z.object({
   retentionDays: z.number().int().positive().optional(),
 });
 export type CreateSiteConfig = z.input<typeof CreateSiteConfig>;
+
+export const SdkConsentMode = z.enum(['require-consent', 'opt-out', 'none']);
+const CountryCode = z.string().regex(/^[A-Z]{2}$/, 'Two-letter country codes, for example FR');
+/**
+ * Per-site browser SDK settings, served to the snippet by GET /ingest/v1/config (`remoteConfig: true`). Options passed in code still
+ * win. Defaults are the SDK's own defaults; consent mode, region rules and identify rules are also enforced at ingest.
+ */
+export const SiteSdkSettings = z.object({
+  consentMode: SdkConsentMode.default('require-consent'),
+  /** First matching rule wins for a visitor from one of these countries (CDN country header); others use `consentMode`. */
+  regions: z.array(z.object({ countries: z.array(CountryCode).min(1).max(60), consentMode: SdkConsentMode })).max(20).default([]),
+  /** require-consent only: keep up to 50 pre-decision events in memory and send them once analytics is granted. */
+  bufferUntilConsent: z.boolean().default(false),
+  autoPageViews: z.boolean().default(true),
+  /** Automatic page views only on these paths: `/shop` (the page and below) or `/blog/*` (prefix). Empty = every page. */
+  pageViewRoutes: z.array(z.string().regex(/^\/[^\s?#]*$/, 'A path starting with /').max(200)).max(50).default([]),
+  stripQuery: z.boolean().default(false),
+  /** Query parameters kept in page URLs and referrers; every other one is dropped. Empty = keep all (unless stripQuery). */
+  allowParams: z.array(z.string().regex(/^[\w.[\]-]{1,64}$/)).max(50).default([]),
+  /** Which identifiers a browser identify may carry. A disallowed one is dropped by the SDK and refused by the server. */
+  identify: z.object({ email: z.boolean().default(true), phone: z.boolean().default(true), externalId: z.boolean().default(true) }).default({ email: true, phone: true, externalId: true }),
+  /** Signed identify: browser identify needs a `signature` from your server (POST /v1/sites/:id/identity-secret), and browser events carry no profile. */
+  requireSignedIdentify: z.boolean().default(false),
+  batchSize: z.number().int().min(1).max(50).default(20),
+  flushMs: z.number().int().min(250).max(60_000).default(2000),
+  maxQueue: z.number().int().min(10).max(1000).default(200),
+  autocapture: z.boolean().default(false),
+  trackVideo: z.boolean().default(false),
+});
+export type SiteSdkSettings = z.infer<typeof SiteSdkSettings>;
+/** GET/PUT /v1/sites/:id/settings: the SDK settings plus the server-side ingest switches of the site. */
+export const SiteSettingsDto = SiteSdkSettings.extend({ botFilter: z.boolean(), trustBrowserRevenue: z.boolean(), identitySecretSet: z.boolean() });
+export const SiteSettingsBody = SiteSdkSettings.extend({ botFilter: z.boolean().default(true), trustBrowserRevenue: z.boolean().default(false) });
+/** GET /ingest/v1/config: what the snippet applies; `consentMode` is already resolved for the visitor's region. */
+export const SdkRemoteConfig = SiteSdkSettings.omit({ regions: true });
+/** The identity secret, shown once; signing identities with it is done on the site's server, never in the browser. */
+export const SiteIdentitySecret = z.object({ secret: z.string(), createdAt: z.string() });
+/** POST /ingest/v1/test: each event checked as the batch endpoint would, nothing stored. */
+export const IngestTestResult = z.object({
+  consent: z.object({ ok: z.boolean(), reason: z.string().optional(), consentMode: SdkConsentMode }),
+  items: z.array(z.object({ index: z.number().int(), name: z.string().nullable(), ok: z.boolean(), issues: z.array(z.string()) })),
+});
 
 /** Workspace-wide ingest settings: the server ingest switch and the custom field used as each person's primary key. */
 export const EventSettingsDto = z.object({

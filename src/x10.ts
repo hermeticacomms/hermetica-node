@@ -15,7 +15,7 @@ export function x10Resources(http: ReturnType<typeof createTransport>) {
   const q = (v: unknown) => v as Query;
   return {
     agencyGroups: {
-      list: () => http<Out<typeof X10ClientGroupDto>[]>('GET', '/v1/agency/groups'),
+      list: () => http<{ items: Out<typeof X10ClientGroupDto>[]; nextCursor: string | null }>('GET', '/v1/agency/groups'),
       create: (body: In<typeof X10ClientGroupBody>) => http<Out<typeof X10ClientGroupDto>>('POST', '/v1/agency/groups', { body }),
       update: (id: string, body: { name?: string; workspaceIds?: string[] }) => http<Out<typeof X10ClientGroupDto>>('PUT', `/v1/agency/groups/${enc(id)}`, { body }),
       unlink: (id: string, workspaceIds: string[]) => http<Out<typeof X10ClientGroupDto>>('POST', `/v1/agency/groups/${enc(id)}/unlink`, { body: { workspaceIds } }),

@@ -14,7 +14,7 @@ export function z10Resources(http: ReturnType<typeof createTransport>) {
   const q = (v: unknown) => v as Query;
   return {
     members: {
-      list: () => http<Out<typeof MemberDto>[]>('GET', '/v1/members'),
+      list: () => http<{ items: Out<typeof MemberDto>[]; nextCursor: string | null }>('GET', '/v1/members'),
       get: (userId: string) => http<Out<typeof MemberDto>>('GET', `/v1/members/${enc(userId)}`),
       /** Emails the invitee when the server has a platform mailer; the one-time token is returned either way. */
       invite: (email: string, role: Out<typeof MemberDto>['role']) => http<Out<typeof InvitationResult>>('POST', '/v1/members', { body: { email, role } }),

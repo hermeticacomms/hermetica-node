@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Attributes, Channel, Id, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { Attributes, Channel, DateTimeIn, Id, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { LegalBasis } from './consent.ts';
 
 const str = z.string().max(256).nullable();
@@ -55,6 +55,8 @@ export const ProfileDto = z.object({
   region: z.string().nullable(),
   source: z.string().nullable(),
   lifecycleStage: z.string().nullable(),
+  /** 'unverified' until an imported or acquired person opens, clicks (human) or confirms; null when it never applied. */
+  verification: z.enum(['unverified', 'verified']).nullish(),
   ownerUserId: z.string().nullable(),
   attributes: z.record(z.string(), z.unknown()),
   tags: z.array(z.string()),
@@ -62,7 +64,7 @@ export const ProfileDto = z.object({
   archivedAt: Timestamp.nullish(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
-  /** Contact form only: channels whose `subscribed` was not recorded because the person unsubscribed before (only they can opt back in). */
+  /** Contact form only: channels whose `subscribed` has no effect: the person unsubscribed before (only they can opt back in) or the address is suppressed (e.g. erased on request). */
   consentIgnored: z.array(Channel).optional(),
 });
 export const ProfilePage = pageResult(ProfileDto);
@@ -80,10 +82,10 @@ export const ProfileFilterFields = z.object({
   /** Exact normalized match. */
   email: z.string().max(320).optional(),
   phone: z.string().max(40).optional(),
-  createdSince: z.coerce.date().optional(),
-  createdBefore: z.coerce.date().optional(),
-  updatedSince: z.coerce.date().optional(),
-  updatedBefore: z.coerce.date().optional(),
+  createdSince: DateTimeIn().optional(),
+  createdBefore: DateTimeIn().optional(),
+  updatedSince: DateTimeIn().optional(),
+  updatedBefore: DateTimeIn().optional(),
   /** Any custom attribute: `attrKey` compared to `attrValue` (numbers compare numerically). */
   attrKey: z.string().max(128).optional(),
   attrOp: z.enum(['eq', 'contains', 'gt', 'lt']).default('eq'),
@@ -94,7 +96,7 @@ export const ProfileFilterFields = z.object({
   consentStatus: z.enum(['granted', 'revoked', 'pending_confirmation', 'none']).optional(),
   consentChannel: Channel.optional(),
   /** Consent state last changed on/after this instant. */
-  consentSince: z.coerce.date().optional(),
+  consentSince: DateTimeIn().optional(),
   /** Interest: granted consent on this topic. */
   topicId: z.uuid().optional(),
   /** Location (exact, case-insensitive). */
@@ -105,8 +107,8 @@ export const ProfileFilterFields = z.object({
   segmentId: z.uuid().optional(),
   /** Has this event (optionally inside a time window). */
   eventName: z.string().max(128).optional(),
-  eventSince: z.coerce.date().optional(),
-  eventBefore: z.coerce.date().optional(),
+  eventSince: DateTimeIn().optional(),
+  eventBefore: DateTimeIn().optional(),
   /** Profile.source, e.g. `import:<id>` or `form:<id>`. */
   source: z.string().max(128).optional(),
   /** Archived contacts are hidden unless asked for. */
@@ -147,12 +149,17 @@ export const ActivityDto = z.object({
   at: Timestamp,
 });
 export const ActivityPage = pageResult(ActivityDto);
-export const TagsBody = z.object({ names: z.array(z.string().min(1).max(64)).min(1).max(100) });
+const TagNames = z.array(z.string().min(1).max(64)).min(1).max(100);
+/** `tags` is canonical (as on profile create and resource tags); `names` is the deprecated alias older clients send. */
+export const TagsBody = z.object({ tags: TagNames.optional(), names: TagNames.optional().describe('Deprecated: use tags') })
+  .refine((b) => Boolean(b.tags ?? b.names), 'Give tags');
 export const TagsResult = z.object({ tags: z.array(z.string()) });
 
 /** Per-list settings (Mailchimp parity). All optional; stored as one JSON bag. */
 export const ListSettings = z.object({
   doubleOptIn: z.boolean().optional(),
+  /** Double opt-in confirmations grant email marketing consent for this topic only (not the whole channel); one list per subscription. */
+  topicId: Id.optional(),
   /** Subscribe by email: a mail to this address (on one of your inbound domains) starts this list's double opt-in for the sender. Needs double opt-in; nothing is granted until they confirm. Empty clears it. */
   subscribeAddress: z.union([z.email(), z.literal('')]).optional(),
   permissionReminder: z.string().max(1000).optional(),
@@ -216,3 +223,21 @@ export const ListsBatchDeleteResult = z.object({ deleted: z.array(Id) });
 
 export const ListJoinOrderQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), cursor: z.string().max(80).optional() });
 export const ListJoinOrderPage = z.object({ items: z.array(ListMemberMetaDto), nextCursor: z.string().nullable() });
+
+// ---- identity settings: match order, duplicate rules, timeline volume ---------------------------------------------
+export const IDENTITY_MATCH_TYPES = ['external_id', 'email', 'phone', 'anonymous_id'] as const;
+export const DUPLICATE_RULES = ['email_alias', 'same_name_city'] as const;
+/** Message rows on the profile timeline: every send status and engagement, engagement only (opens, clicks, replies, unsubscribes), or none. */
+export const TIMELINE_MESSAGE_MODES = ['all', 'engagement', 'off'] as const;
+const distinct = (a: readonly string[]) => new Set(a).size === a.length;
+/** Defaults are the behaviour before these became settings. */
+export const IdentitySettingsDto = z.object({
+  /** Which identifier wins when one call's identifiers point at different people: every type exactly once, strongest first. */
+  matchOrder: z.array(z.enum(IDENTITY_MATCH_TYPES)).length(IDENTITY_MATCH_TYPES.length).refine(distinct, 'List each identifier once'),
+  /** Duplicate-suggestion rules in use (empty = no suggestions). */
+  duplicateRules: z.array(z.enum(DUPLICATE_RULES)).max(DUPLICATE_RULES.length).refine(distinct, 'List each rule once'),
+  timelineMessages: z.enum(TIMELINE_MESSAGE_MODES),
+});
+export type IdentitySettings = z.infer<typeof IdentitySettingsDto>;
+export const UpdateIdentitySettingsBody = IdentitySettingsDto.partial();
+export const DEFAULT_IDENTITY_SETTINGS: IdentitySettings = { matchOrder: [...IDENTITY_MATCH_TYPES], duplicateRules: [...DUPLICATE_RULES], timelineMessages: 'all' };

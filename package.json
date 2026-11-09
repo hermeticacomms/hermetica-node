@@ -26,6 +26,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"

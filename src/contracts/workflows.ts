@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { Channel, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Channel, DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
 import { PropertyCondition } from './metrics.ts';
 import { SegmentDefinition } from './segments.ts';
 import { SequenceSettings } from './outbound.ts';
-import { Duration, GoalMatch, NodeId, WorkflowNode } from './workflow-nodes.ts';
+import { Duration, EventRef, FieldRef, GoalMatch, NodeId, TagRef, WorkflowNode, refId } from './workflow-nodes.ts';
+import { pick } from './pickers.ts';
 
 export * from './workflow-nodes.ts';
 
@@ -34,67 +35,70 @@ const t = <K extends string, S extends z.ZodRawShape>(type: K, shape: S) => z.ob
 export const Trigger = z.discriminatedUnion('type', [
   t('profile_created', {}),
   /** `where` is checked against the profile's current value after the change; `from` is the recorded previous value of the `where` field. */
-  t('profile_updated', { keys: z.array(z.string()).optional(), from: z.unknown().optional(), where: z.object({ field: z.string().min(1).max(128), op: z.enum(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'exists', 'not_exists']), value: z.unknown().optional() }).optional() }),
-  t('list_added', { listId: Id }),
-  t('list_removed', { listId: Id }),
+  t('profile_updated', { keys: z.array(pick(z.string(), 'field')).optional(), from: z.unknown().optional(), where: z.object({ field: FieldRef, op: z.enum(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'exists', 'not_exists']), value: z.unknown().optional() }).optional() }),
+  /** The lifecycle stage changed; `to` / `from` narrow it to a stage name (case-insensitive). */
+  t('lifecycle_changed', { to: pick(z.string().max(64), 'lifecycle_stage').optional(), from: pick(z.string().max(64), 'lifecycle_stage').optional() }),
+  t('list_added', { listId: refId('list') }),
+  t('list_removed', { listId: refId('list') }),
   /** `enrollExisting`: when this trigger is first published, also enroll everyone already in the segment (batched, honours re-entry rules). */
-  t('segment_entered', { segmentId: Id, enrollExisting: z.boolean().optional() }),
-  t('segment_exited', { segmentId: Id }),
-  t('tag_added', { name: z.string().min(1).max(64) }),
-  t('tag_removed', { name: z.string().min(1).max(64) }),
+  t('segment_entered', { segmentId: refId('segment'), enrollExisting: z.boolean().optional() }),
+  t('segment_exited', { segmentId: refId('segment') }),
+  t('tag_added', { name: TagRef }),
+  t('tag_removed', { name: TagRef }),
   t('consent_changed', { channel: Channel, status: z.enum(['granted', 'revoked']) }),
-  /** `filter` is equality only; `conditions` add operators (neq, gt, lt, contains, exists, ...) over the event properties. */
-  t('event', { name: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional() }),
+  /** `filter` is equality only; `conditions` add operators (neq, gt, lt, contains, exists, ...) over the event properties. `app`: only events sent with that app. */
+  t('event', { name: EventRef, app: AppSlug.optional(), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional() }),
   /** Custom-object records: fires for every profile linked to the record. `object_updated` can require property conditions on the record. */
-  t('object_created', { objectType: z.string().min(1).max(64) }),
-  t('object_updated', { objectType: z.string().min(1).max(64), conditions: z.array(PropertyCondition).max(10).optional() }),
-  t('object_linked', { objectType: z.string().min(1).max(64) }),
+  t('object_created', { objectType: pick(z.string().min(1).max(64), 'object_type') }),
+  t('object_updated', { objectType: pick(z.string().min(1).max(64), 'object_type'), conditions: z.array(PropertyCondition).max(10).optional() }),
+  t('object_linked', { objectType: pick(z.string().min(1).max(64), 'object_type') }),
   /** A relationship between two records was added; fires for profiles linked to either side. */
-  t('relationship_added', { objectType: z.string().max(64).optional(), kind: z.string().max(64).optional() }),
+  t('relationship_added', { objectType: pick(z.string().max(64), 'object_type').optional(), kind: z.string().max(64).optional() }),
   /** A score model's value crossed `threshold` upwards. */
   /** `enrollExisting`: when first published, also enroll everyone already at or above the threshold (batched, honours re-entry rules). */
-  t('score_reached', { modelId: Id, threshold: z.number(), enrollExisting: z.boolean().optional() }),
+  t('score_reached', { modelId: refId('score'), threshold: z.number(), enrollExisting: z.boolean().optional() }),
   /** Catalog events `back_in_stock` / `price_drop` (properties: sku, dropPercent) emitted by the catalog feed diff. */
-  t('back_in_stock', { sku: z.string().max(128).optional() }),
-  t('price_drop', { sku: z.string().max(128).optional(), minPercent: z.number().min(0).max(100).optional() }),
+  t('back_in_stock', { sku: pick(z.string().max(128), 'product').optional() }),
+  t('price_drop', { sku: pick(z.string().max(128), 'product').optional(), minPercent: z.number().min(0).max(100).optional() }),
   /** `offsetDays`: negative = before the date, positive = after. `yearly`: match the date's month and day every year (birthdays, renewals). */
-  t('date_property', { attribute: z.string().min(1).max(128), offsetDays: z.number().int(), time: z.string().regex(/^\d{2}:\d{2}$/), tz: z.string(), yearly: z.boolean().optional() }),
+  t('date_property', { attribute: FieldRef, offsetDays: z.number().int(), time: z.string().regex(/^\d{2}:\d{2}$/), tz: pick(z.string(), 'timezone'), yearly: z.boolean().optional() }),
   /** Catalog event `catalog.low_inventory` (stock fell through 10, 5, 3 or 1); `below` narrows to a lower stock level. */
-  t('low_inventory', { sku: z.string().max(128).optional(), below: z.number().int().min(1).max(10).optional() }),
-  t('form_submitted', { formId: Id }),
+  t('low_inventory', { sku: pick(z.string().max(128), 'product').optional(), below: z.number().int().min(1).max(10).optional() }),
+  /** `completed`: on a step-by-step form, start when the last step is saved (every answer on the contact) instead of at step 1. */
+  t('form_submitted', { formId: refId('form'), completed: z.boolean().optional() }),
   /** `endsAt` (ISO date-time) and `maxRuns` stop the recurrence; leave both empty to repeat until unpublished. `maxEntriesPerRun` caps how many enter at each occurrence.
    * `localTime`: the cron runs on each person's own wall clock (their profile zone, else `tz`), so "9:00" is 9:00 where they are. */
   t('schedule', {
-    cron: z.string().min(1).max(100), tz: z.string(), audience: z.object({ segmentId: Id.optional(), listId: Id.optional() }), endsAt: z.iso.datetime({ offset: true }).optional(), maxRuns: z.number().int().min(1).max(100_000).optional(),
+    cron: z.string().min(1).max(100), tz: pick(z.string(), 'timezone'), audience: z.object({ segmentId: refId('segment').optional(), listId: refId('list').optional() }), endsAt: z.iso.datetime({ offset: true }).optional(), maxRuns: z.number().int().min(1).max(100_000).optional(),
     maxEntriesPerRun: z.number().int().min(1).max(100_000).optional(), localTime: z.boolean().optional(),
   }),
   /** A new item (published within the last poll window) appeared in the feed; starts the audience, with the item as the trigger event. */
-  t('rss_item', { url: z.url(), audience: z.object({ segmentId: Id.optional(), listId: Id.optional() }) }),
+  t('rss_item', { url: z.url(), audience: z.object({ segmentId: refId('segment').optional(), listId: refId('list').optional() }) }),
   t('webhook', { inboundKey: z.string().min(1).max(64) }),
   t('api', {}),
   t('prospect_enrolled', {}),
   /** `url`: for clicks, only this link (substring match). */
-  t('message_event', { kind: z.string().min(1).max(32), url: z.string().max(500).optional() }),
+  t('message_event', { kind: pick(z.string().min(1).max(32), 'message_event'), url: z.string().max(500).optional() }),
   /** `keyword`: for SMS replies, the first word of the reply (case-insensitive), e.g. STOP-style opt-ins like JOIN. */
-  t('reply_received', { classification: z.string().optional(), keyword: z.string().max(64).optional() }),
+  t('reply_received', { classification: pick(z.string(), 'reply_class').optional(), keyword: z.string().max(64).optional() }),
   t('meeting_booked', {}),
   /** The person's device entered an in-app geofence (the SDK hit is recorded as a `geofence_entered` event, so the app sends nothing custom). Empty `geofenceId` = any geofence. */
-  t('geofence_entered', { geofenceId: z.string().max(128).optional() }),
+  t('geofence_entered', { geofenceId: pick(z.string().max(128), 'geofence').optional() }),
   /** A workspace-registered trigger type (Settings > Custom actions and triggers): fires on its event when every `values` entry equals the event property. */
-  t('custom', { typeKey: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), values: z.record(z.string(), z.unknown()).default({}) }),
+  t('custom', { typeKey: pick(z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), 'custom_trigger'), values: z.record(z.string(), z.unknown()).default({}) }),
   t('mailbox_disconnected', {}),
   t('campaign_paused', {}),
   /** Loyalty ledger (packages/loyalty). `direction`: earned = points added, spent = points removed. */
-  t('loyalty_points_changed', { programId: Id.optional(), direction: z.enum(['earned', 'spent', 'any']).optional() }),
-  t('loyalty_tier_changed', { programId: Id.optional(), toTierId: Id.optional() }),
-  t('loyalty_reward_available', { programId: Id.optional(), rewardId: Id.optional() }),
+  t('loyalty_points_changed', { programId: refId('loyalty_program').optional(), direction: z.enum(['earned', 'spent', 'any']).optional() }),
+  t('loyalty_tier_changed', { programId: refId('loyalty_program').optional(), toTierId: refId('loyalty_tier').optional() }),
+  t('loyalty_reward_available', { programId: refId('loyalty_program').optional(), rewardId: refId('loyalty_reward').optional() }),
 ]);
 export type Trigger = z.infer<typeof Trigger>;
 export type TriggerType = Trigger['type'];
 
 export const Goal = z.object({
   kind: z.enum(['event', 'segment']),
-  eventName: z.string().max(128).optional(),
+  eventName: pick(z.string().max(128), 'event').optional(),
   filter: z.record(z.string(), z.unknown()).optional(),
   definition: SegmentDefinition.optional(),
   windowDays: z.number().int().min(1).max(365).default(30),
@@ -125,12 +129,16 @@ export const WorkflowSettings = z.object({
   }).optional(),
   /** Journey caps: total enrollments ever, and enrollments in flight at once. Entrants over a cap are skipped (`cap_reached`). */
   enrollmentCap: z.object({ maxTotal: z.number().int().min(1).optional(), maxConcurrent: z.number().int().min(1).optional() }).optional(),
+  /** Entry rate: at most `perHour` people start per clock hour. Over it, `delay` starts them in the next hour with room (up to 30 days ahead), `skip` turns them away (`rate_limited`). Empty = no limit. */
+  entryRate: z.object({ perHour: z.number().int().min(1).max(1_000_000), onExceed: z.enum(['delay', 'skip']).default('delay') }).optional(),
+  /** Longest any one step may hold a person: a delay or wait whose timer is later is cut to this and its timeout path is taken. Empty = no limit. */
+  maxWait: Duration.optional(),
   /** Publish up / down dates: outside this window nobody enters and steps are held (like a pause); inside it the journey runs as published. */
   activeWindow: z.object({ from: z.iso.datetime({ offset: true }).optional(), until: z.iso.datetime({ offset: true }).optional() }).optional(),
   /** Who is told (in-app always, plus email) when an enrollment fails. */
-  failureAlert: z.object({ userIds: z.array(Id).max(20).default([]), emails: z.array(z.email()).max(20).default([]) }).optional(),
+  failureAlert: z.object({ userIds: z.array(refId('user')).max(20).default([]), emails: z.array(z.email()).max(20).default([]) }).optional(),
   timezoneSource: z.enum(['profile', 'workspace']).default('profile'),
-  timezone: z.string().default('UTC'),
+  timezone: pick(z.string(), 'timezone').default('UTC'),
   exitOn: SegmentDefinition.optional(),
   /** Present on mode=sequence workflows (stop rules, mailbox, schedule, dedupe, the step list the graph was compiled from). */
   sequence: SequenceSettings.optional(),
@@ -172,8 +180,8 @@ export const UpdateWorkflowBody = z.object({
 export const WorkflowListQuery = PageQuery.extend({
   status: WorkflowStatus.optional(), folder: z.string().optional(), mode: WorkflowMode.optional(),
   q: z.string().trim().max(200).optional(), archived: z.enum(['true', 'false']).optional(), triggerType: z.string().max(32).optional(),
-  createdFrom: z.coerce.date().optional(), createdTo: z.coerce.date().optional(), updatedFrom: z.coerce.date().optional(), updatedTo: z.coerce.date().optional(),
-  startedFrom: z.coerce.date().optional(), startedTo: z.coerce.date().optional(),
+  createdFrom: DateTimeIn().optional(), createdTo: DateTimeIn().optional(), updatedFrom: DateTimeIn().optional(), updatedTo: DateTimeIn().optional(),
+  startedFrom: DateTimeIn().optional(), startedTo: DateTimeIn().optional(),
   sort: z.enum(['created', '-created', 'updated', '-updated', 'name', '-name']).optional(),
 });
 export type WorkflowListQuery = z.infer<typeof WorkflowListQuery>;
@@ -212,9 +220,17 @@ export const ResumeBody = z.object({ policy: z.enum(['run_now', 'skip_missed_sen
 /** `data` is exposed to the journey as the trigger event (`trigger` conditions, `{{ trigger.x }}` / `{{ event.x }}` liquid). */
 export const EnrollBody = z.object({ profileIds: z.array(Id).min(1).max(1000), triggerType: z.string().max(32).default('api'), data: z.record(z.string(), z.unknown()).optional() });
 export const EnrollResult = z.object({ enrolled: z.number().int(), skipped: z.array(z.object({ profileId: Id, reason: z.string() })), /** The rest of an object segment is enrolled by the worker. */ queued: z.boolean().optional() });
+/** Inbound-webhook trigger: who to enroll (an existing profile id, or identifiers that find or create one) and the data the journey sees as its trigger event. */
+export const WebhookEnrollBody = z.object({
+  profileId: Id.optional(), email: z.string().max(320).optional(), phone: z.string().max(40).optional(), externalId: z.string().min(1).max(256).optional(),
+  data: z.record(z.string(), z.unknown()).default({}),
+}).refine((b) => b.profileId || b.email || b.phone || b.externalId, { message: 'Give profileId, email, phone or externalId', path: ['email'] });
+export const WebhookEnrollResult = z.object({ status: z.enum(['enrolled', 'skipped']), reason: z.string().optional(), enrollmentId: Id.optional() });
+/** Inbound-webhook keys shorter than this are refused by the receiver (the key is the URL's secret). */
+export const MIN_INBOUND_KEY = 16;
 export const JumpBody = z.object({ nodeId: NodeId });
 /** New wake-up time for a waiting person; must be in the future. */
-export const RescheduleBody = z.object({ runAt: z.coerce.date() });
+export const RescheduleBody = z.object({ runAt: DateTimeIn() });
 export const MigrateBody = z.object({ fromVersionId: Id, toVersionId: Id, nodeMap: z.record(z.string(), z.string()).default({}) });
 export const MigrateResult = z.object({ moved: z.number().int(), exitedUnmapped: z.number().int() });
 
@@ -229,13 +245,13 @@ export const SampleProfile = z.object({
   consents: z.array(z.string()).default([]),
 });
 export type SampleProfile = z.infer<typeof SampleProfile>;
-export const TimedEvent = z.object({ profileId: z.string(), name: z.string(), at: z.coerce.date(), properties: z.record(z.string(), z.unknown()).default({}) });
+export const TimedEvent = z.object({ profileId: z.string(), name: z.string(), at: DateTimeIn(), properties: z.record(z.string(), z.unknown()).default({}) });
 export type TimedEvent = z.infer<typeof TimedEvent>;
 export const SimulateBody = z.object({
   profiles: z.array(SampleProfile).min(1).max(100),
   events: z.array(TimedEvent).max(1000).default([]),
-  start: z.coerce.date(),
-  until: z.coerce.date().optional(),
+  start: DateTimeIn(),
+  until: DateTimeIn().optional(),
   /** Inline definition to simulate an unsaved draft; defaults to the stored draft. */
   definition: WorkflowDefinition.optional(),
   /** Segment ids / definitions can't be evaluated in memory; profiles list matching segments in `segmentIds`. */
@@ -265,9 +281,22 @@ export const WorkflowReport = z.object({
   goal: z.object({ conversions: z.number().int(), timeToConvertP50Sec: z.number().nullable(), timeToConvertP90Sec: z.number().nullable() }),
   messages: z.record(z.string(), z.number().int()),
 });
-export const ReportQuery = z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional() });
+export const ReportQuery = z.object({ from: DateTimeIn().optional(), to: DateTimeIn().optional() });
+/** A starter scenario for the simulator: what starts the journey, what happens after (hours from start) and how each engagement wait resolves. */
+export const SimPreset = z.object({
+  triggerEvent: z.record(z.string(), z.unknown()).optional(),
+  events: z.array(z.object({ name: z.string(), afterHours: z.number() })),
+  waitOutcomes: z.record(z.string(), z.enum(['happens', 'never'])),
+  tags: z.array(z.string()),
+  smsConsent: z.boolean(),
+  /** Profile date fields the flow waits on, as days from the simulation start. */
+  dateFields: z.record(z.string(), z.number()),
+});
+export type SimPreset = z.infer<typeof SimPreset>;
 export const WorkflowTemplateDto = z.object({
   key: z.string(), name: z.string(), description: z.string(), definition: WorkflowDefinition,
+  /** Gallery email templates designed for this flow, and the simulator scenario that walks it. */
+  templates: z.array(z.string()).default([]), preset: SimPreset.optional(),
   category: z.string().default('lifecycle'),
   /** Events the flow relies on; `missing` lists those this workspace has never received (filled by the API). */
   requires: z.array(z.string()).default([]),

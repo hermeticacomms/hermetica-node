@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel } from './common.ts';
+import { Channel, IsoDay } from './common.ts';
 
 export const METRICS = [
   'queued', 'sent', 'delivered', 'bounced', 'complained', 'failed', 'opened', 'opened_unique', 'clicked', 'clicked_unique', 'replied', 'unsubscribed',
@@ -12,7 +12,7 @@ export type MetricAvailability = z.infer<typeof MetricAvailability>;
 export const AvailabilityMap = z.record(Metric, MetricAvailability);
 
 const Bool = z.enum(['true', 'false']).transform((v) => v === 'true');
-const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const Day = IsoDay;
 
 export const MessageAnalyticsQuery = z.object({
   from: Day, to: Day,
@@ -26,7 +26,8 @@ export const MessageAnalyticsQuery = z.object({
 export type MessageAnalyticsQuery = z.infer<typeof MessageAnalyticsQuery>;
 
 export const SummaryQuery = z.object({ includeMachineOpens: Bool.optional() });
-export const SourceParams = z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(128) });
+/** Every kind a message job can come from (D-PLAT-25: anything else is 400). */
+export const SourceParams = z.object({ kind: z.enum(['campaign', 'workflow', 'sequence', 'api', 'in_app']), id: z.string().min(1).max(128) });
 
 export const MetricCounts = z.record(Metric, z.number().int());
 export const SeriesPoint = z.object({ key: z.string(), counts: MetricCounts });
@@ -77,7 +78,7 @@ export const RecommendationList = z.object({ profileId: z.uuid(), computedAt: z.
 export const PredictionRunResult = z.object({ ran: z.boolean(), profiles: z.number().int(), reason: z.string().nullable() });
 
 // ---- funnels and cohorts -----------------------------------------------------------------------------------------------
-const DayStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const DayStr = IsoDay;
 export const FunnelQuery = z.object({
   steps: z.array(z.string().min(1).max(128)).min(2).max(6),
   from: DayStr, to: DayStr,

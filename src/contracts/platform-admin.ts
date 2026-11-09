@@ -25,7 +25,7 @@ export const UsagePeriodDto = z.object({
   ai_tokens: z.number().int(),
 });
 export const UsageHistoryQuery = z.object({ months: z.coerce.number().int().min(1).max(36).default(12) });
-export const UsagePeriodParams = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) });
+export const UsagePeriodParams = z.object({ period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use a month like 2026-11') });
 export const InvoiceDto = z.object({
   id: z.string(), number: z.string().nullable(), status: z.string(), currency: z.string(), amountDueMinor: z.number().int(), amountPaidMinor: z.number().int(),
   createdAt: Timestamp, hostedUrl: z.string().nullable(), pdfUrl: z.string().nullable(),

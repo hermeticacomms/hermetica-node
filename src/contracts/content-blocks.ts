@@ -31,7 +31,7 @@ export type Block = Base & (
   | { type: 'list'; for: string; in: string; children: Block[] }
   | { type: 'menu'; items: { label: string; href: string }[]; align?: 'left' | 'center' | 'right' }
   | { type: 'table'; rows: string[][]; header?: boolean }
-  | { type: 'countdown'; to: string; label?: string; expiredText?: string }
+  | { type: 'countdown'; to: string; label?: string; expiredText?: string; color?: string; background?: string; fontSize?: number; width?: number; zone?: string }
   | { type: 'saved'; sectionId: string }
   | { type: 'video'; thumbnail: string; href: string; alt?: string; width?: number; label?: string }
   | { type: 'split'; image: string; alt?: string; imageSide?: 'left' | 'right'; html: string; ctaLabel?: string; ctaHref?: string }
@@ -67,8 +67,10 @@ export const Block: z.ZodType<Block> = z.lazy(() =>
     z.object({ ...base, type: z.literal('list'), for: z.string().regex(/^[a-z_][a-z0-9_]*$/i).max(32), in: z.string().regex(/^[a-z_][a-z0-9_.]*$/i).max(100), children: children() }),
     z.object({ ...base, type: z.literal('menu'), items: z.array(z.object({ label: z.string().max(60), href: z.string().max(2048) })).max(8), align: z.enum(['left', 'center', 'right']).optional() }),
     z.object({ ...base, type: z.literal('table'), rows: z.array(z.array(z.string().max(500)).min(1).max(6)).min(1).max(30), header: z.boolean().optional() }),
-    // `to`: ISO-8601 instant. The remaining time is computed when the message is rendered for each recipient (not live at open time).
-    z.object({ ...base, type: z.literal('countdown'), to: z.iso.datetime({ offset: true }), label: z.string().max(100).optional(), expiredText: z.string().max(200).optional() }),
+    // `to`: ISO-8601 instant. Sends show a live timer image (`/t/cd/<signed>.gif`, drawn at open time with these colours, size and zone label); the text computed at render is its alt and the fallback.
+    z.object({ ...base, type: z.literal('countdown'), to: z.iso.datetime({ offset: true }), label: z.string().max(100).optional(), expiredText: z.string().max(200).optional(),
+      color: z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/).optional(), background: z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/).optional(),
+      fontSize: z.number().int().min(10).max(70).optional(), width: z.number().int().min(120).max(600).optional(), zone: z.string().regex(/^[A-Za-z0-9 :+/.-]{1,24}$/).optional() }),
     z.object({ ...base, type: z.literal('saved'), sectionId: z.uuid() }),
     // Video thumbnail: email clients cannot play video, so a still image links out to the video page.
     z.object({ ...base, type: z.literal('video'), thumbnail: z.string().max(2048), href: z.string().max(2048), alt: z.string().max(500).optional(), width: z.number().int().min(1).max(1200).optional(), label: z.string().max(100).optional() }),

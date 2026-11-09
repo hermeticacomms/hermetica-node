@@ -7,11 +7,13 @@ export const LintResult = z.object({ errors: z.array(LintIssue), warnings: z.arr
 export type LintResult = z.infer<typeof LintResult>;
 
 export const ReviewBody = z.object({ comment: z.string().max(2000).nullish() });
+/** Why this version is transactional although it contains offer wording; kept in the audit log. */
+export const TransactionalReviewBody = z.object({ note: z.string().trim().min(3).max(500) });
 export const CloneTemplateBody = z.object({ name: z.string().trim().min(1).max(200).optional() });
 export const UploadTypeGroup = z.enum(['image', 'pdf', 'video', 'audio', 'document', 'text', 'archive']);
 export const AssetAccess = z.enum(['public_indexable', 'public_not_indexable', 'private']);
-export const ContentSettingsDto = z.object({ approvalRequired: z.boolean(), uploadTypes: z.array(UploadTypeGroup).max(7).default(['image', 'pdf', 'video']), defaultAssetAccess: AssetAccess.default('public_indexable') });
-export const ContentSettingsPatch = z.object({ approvalRequired: z.boolean(), uploadTypes: z.array(UploadTypeGroup).max(7), defaultAssetAccess: AssetAccess }).partial();
+export const ContentSettingsDto = z.object({ approvalRequired: z.boolean(), campaignApprovalRequired: z.boolean().default(false), transactionalPromo: z.enum(['warn', 'block']).default('warn'), uploadTypes: z.array(UploadTypeGroup).max(7).default(['image', 'pdf', 'video']), defaultAssetAccess: AssetAccess.default('public_indexable') });
+export const ContentSettingsPatch = z.object({ approvalRequired: z.boolean(), campaignApprovalRequired: z.boolean(), transactionalPromo: z.enum(['warn', 'block']), uploadTypes: z.array(UploadTypeGroup).max(7), defaultAssetAccess: AssetAccess }).partial();
 
 export const AssetDto = z.object({
   id: Id, filename: z.string(), contentType: z.string(), bytes: z.number(), width: z.number(), height: z.number(), url: z.string(), thumbUrl: z.string().nullable().default(null), altText: z.string().nullable(), folderId: Id.nullable(), language: z.string().nullable(), tags: z.array(z.string()).default([]), scanStatus: z.enum(['unscanned', 'clean', 'quarantined']).default('unscanned'), access: AssetAccess.default('public_indexable'), createdAt: Timestamp,
@@ -30,13 +32,16 @@ export const TrackingDomainInput = z.object({ domain: z.string().trim().toLowerC
 export const TrackingDomainDto = z.object({
   id: Id, domain: z.string(), status: z.enum(['pending', 'verified', 'failed']), cnameTarget: z.string(), verifiedAt: Timestamp.nullable(),
   lastCheckedAt: Timestamp.nullable(), lastError: z.string().nullable(), createdAt: Timestamp,
+  /** HTTPS certificate on the host. Links use https only once `issued`; until then they go out over http. */
+  certStatus: z.enum(['pending', 'issued', 'failed']), certCheckedAt: Timestamp.nullable(), certError: z.string().nullable(),
 });
 export const TrackingDomainPage = pageResult(TrackingDomainDto);
 
 export const LinkCheckDto = z.object({ url: z.string(), status: z.number().nullable(), error: z.string().nullable(), checkedAt: Timestamp });
 export const LinkCheckResult = z.object({ pending: z.boolean(), items: z.array(LinkCheckDto) });
 
-export const GalleryItem = z.object({ key: z.string(), name: z.string(), category: z.string(), description: z.string(), kind: z.enum(['blocks', 'html', 'text', 'sms']) });
+/** `category` is the flow purpose; `industry` groups industry starters; `flow` is the matching flow blueprint key. */
+export const GalleryItem = z.object({ key: z.string(), name: z.string(), category: z.string(), description: z.string(), kind: z.enum(['blocks', 'html', 'text', 'sms']), industry: z.string().optional(), flow: z.string().optional() });
 export const InstantiateGalleryBody = z.object({ name: z.string().trim().min(1).max(200).optional(), folder: z.string().max(200).nullable().optional() });
 export const FolderList = z.object({ folders: z.array(z.string()), items: z.array(FolderDto).default([]) });
 

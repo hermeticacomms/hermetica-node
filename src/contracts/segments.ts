@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, Id, PageQuery, Timestamp } from './common.ts';
+import { AppSlug, Channel, Id, PageQuery, Timestamp } from './common.ts';
 import { ProfileDto } from './identity.ts';
 
 export const MAX_SEGMENT_DEPTH = 5;
@@ -13,6 +13,8 @@ export const STANDARD_FIELDS = {
   email: 'string', phone: 'string', firstName: 'string', lastName: 'string', timezone: 'string', locale: 'string',
   country: 'string', city: 'string', region: 'string', source: 'string', lifecycleStage: 'string', ownerUserId: 'string',
   kind: 'string', createdAt: 'date',
+  /** 'unverified' (imported or acquired, no human open/click or confirmation yet), 'verified', or empty. */
+  verification: 'string',
   /** When the profile last changed (date_modified) and when it first got an email, phone or external id (date_identified). */
   updatedAt: 'date', identifiedAt: 'date',
 } as const;
@@ -195,6 +197,8 @@ export const SegmentCondition = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('event'),
     name: z.string().min(1).max(128),
+    /** Only events sent with this `app` (several products in one workspace). */
+    app: AppSlug.optional(),
     properties: z.array(z.object({ path: EventPropertyPath, predicate: Predicate })).max(10).optional(),
     window: EventWindow.default({ kind: 'ever' }),
     measure: EventMeasure.default({ kind: 'count', op: 'gte', value: 1 }),
@@ -217,8 +221,8 @@ export const SegmentCondition = z.discriminatedUnion('type', [
   z.object({ type: z.literal('tracking_opted_out'), ...neg }),
   /** Spend tier from total lifetime value; the tier boundaries are the workspace's segment settings. */
   z.object({ type: z.literal('spend_tier'), tier: z.enum(['low', 'medium', 'high', 'top']), ...neg }),
-  /** Can be sent marketing now: unexpired marketing consent granted and not suppressed on the channel. Negate for "cannot". */
-  z.object({ type: z.literal('can_receive_marketing'), channel: Channel, ...consentExtras, ...neg }),
+  /** Can be sent marketing now: unexpired marketing consent granted and not suppressed on the channel. Negate for "cannot". `topic` (key) asks about that topic's subscription; without it a channel-wide revoke excludes. */
+  z.object({ type: z.literal('can_receive_marketing'), channel: Channel, topic: z.string().min(1).max(64).optional(), ...consentExtras, ...neg }),
   /** A predicted value (CLV, churn risk, next order date...) tested with a number or date operator. */
   z.object({ type: z.literal('predictive'), metric: z.enum(Object.keys(PREDICTIVE_METRICS) as [PredictiveMetric, ...PredictiveMetric[]]), predicate: z.union([NumberPredicate, DatePredicate, SetPredicate, StringPredicate]), ...neg }),
   /** Within a distance of a point or postal code, from the profile's `latitude`/`longitude` attributes. */
@@ -418,10 +422,10 @@ export const SegmentExplainMatch = z.object({ segmentId: Id.nullable(), profileI
 
 // ---- builder helpers: suggestions, export -------------------------------------------------------------------------
 export const SegmentSuggestQuery = z.object({
-  source: z.enum(['event', 'profile', 'consent']),
-  /** Event name for source=event. */
+  source: z.enum(['event', 'profile', 'consent', 'list_meta']),
+  /** Event name for source=event; list id for source=list_meta. */
   name: z.string().max(128).optional(),
-  /** Property path (`Items[].Name`), or a profile field / `attributes.x`. */
+  /** Property path (`Items[].Name`), or a profile field / `attributes.x`; for list_meta a membership key, or `*` for the keys in use. */
   path: z.string().min(1).max(300),
   /** source=consent only: limit to one channel. */
   channel: Channel.optional(),
@@ -432,8 +436,14 @@ export const SegmentExportResult = z.object({ filename: z.string(), csv: z.strin
 // ---- settings: spend tiers, geocoding ------------------------------------------------------------------------------
 export const SegmentSpendTiers = z.object({ mid: z.number().min(0), high: z.number().min(0), top: z.number().min(0) })
   .refine((t) => t.mid < t.high && t.high < t.top, 'Each tier boundary must be higher than the one before');
-export const SegmentSettingsDto = z.object({ spendTiers: SegmentSpendTiers, geocoder: z.enum(['none', 'opencage']), geocoderKeySet: z.boolean() });
-export const UpdateSegmentSettingsBody = z.object({
+/** Evaluation tuning; defaults (60 min, 60 s, 20) are the behaviour before these became settings. */
+export const SegmentEvalSettings = z.object({
+  sweepMinutes: z.number().int().min(15).max(1440),
+  evalTimeoutSeconds: z.number().int().min(5).max(300),
+  previewSampleSize: z.number().int().min(5).max(100),
+});
+export const SegmentSettingsDto = z.object({ spendTiers: SegmentSpendTiers, geocoder: z.enum(['none', 'opencage']), geocoderKeySet: z.boolean() }).extend(SegmentEvalSettings.shape);
+export const UpdateSegmentSettingsBody = SegmentEvalSettings.partial().extend({
   spendTiers: SegmentSpendTiers.optional(),
   geocoder: z.enum(['none', 'opencage']).optional(),
   /** Write-only; an empty string removes the stored key. */

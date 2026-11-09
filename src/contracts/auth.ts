@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, Timestamp } from './common.ts';
+import { Id, Timestamp, TimestampIn } from './common.ts';
 
 export const Role = z.enum(['owner', 'admin', 'marketer', 'sales', 'analyst', 'viewer']);
 export const ApiKeyKind = z.enum(['secret', 'site']);
@@ -20,6 +20,8 @@ export const WorkspaceDto = z.object({
   adminEmail: z.string().nullable(),
   unsubscribeRedirectUrl: z.string().nullable(),
   quietHours: z.object({ start: Hhmm, end: Hhmm }),
+  quietHoursByChannel: z.partialRecord(z.string(), z.object({ start: Hhmm, end: Hhmm })).optional(),
+  apiKeyExpiryDays: z.number().int().nullable().optional(),
   displayCurrency: z.string(),
   fxRates: z.record(z.string(), z.number()),
   sessionDays: z.number().int().nullable(),
@@ -37,6 +39,9 @@ export const WorkspacePatch = z.object({
   adminEmail: z.email().nullable().optional(),
   unsubscribeRedirectUrl: z.url({ protocol: /^https$/ }).nullable().optional(),
   quietHours: z.object({ start: Hhmm, end: Hhmm }).optional(),
+  /** Replaces `quietHours` for one channel; omit a channel to use the workspace hours. SMS uses its own sending hours. */
+  quietHoursByChannel: z.partialRecord(z.enum(['email', 'whatsapp', 'push']), z.object({ start: Hhmm, end: Hhmm })).optional(),
+  apiKeyExpiryDays: z.number().int().min(1).max(730).nullable().optional(),
   displayCurrency: Currency.optional(),
   fxRates: z.record(Currency, z.number().positive().max(1_000_000)).optional(),
   sessionDays: z.number().int().min(1).max(365).nullable().optional(),
@@ -72,7 +77,11 @@ export const ApiKeyCreate = z.object({
   allowedSequenceIds: z.array(z.uuid()).max(50).optional(),
   /** Optional cap on requests per minute for this key; over it the API answers 429. */
   rateLimitPerMin: z.number().int().min(1).max(100_000).optional(),
+  /** Optional expiry; after it the key answers 401 like a revoked one. */
+  expiresAt: TimestampIn.optional(),
 });
+/** Change a live key's own rate budget; null drops it back to the default limit. */
+export const ApiKeyUpdate = z.object({ rateLimitPerMin: z.number().int().min(1).max(100_000).nullable() });
 export const ApiKeyDto = z.object({
   id: Id,
   name: z.string(),
@@ -86,6 +95,9 @@ export const ApiKeyDto = z.object({
   rateLimitPerMin: z.number().int().nullable().optional(),
   lastUsedAt: Timestamp.nullable(),
   revokedAt: Timestamp.nullable(),
+  expiresAt: Timestamp.nullable().optional(),
+  /** User id of the developer who minted the key. */
+  createdBy: Id.nullable().optional(),
   createdAt: Timestamp,
 });
 export const ApiKeyCreated = ApiKeyDto.extend({ plaintext: z.string() });
@@ -109,7 +121,7 @@ export const AuditDto = z.object({
   at: Timestamp,
 });
 
-export const AuditFilter = z.object({ action: z.string().optional(), targetType: z.string().optional(), from: Timestamp.optional(), to: Timestamp.optional() });
+export const AuditFilter = z.object({ action: z.string().optional(), targetType: z.string().optional(), actorId: z.string().max(200).optional(), from: TimestampIn.optional(), to: TimestampIn.optional() });
 export const AuditExportQuery = AuditFilter.extend({ format: z.enum(['csv', 'ndjson']).default('csv'), order: z.enum(['asc', 'desc']).default('desc') });
 export const AuditExport = z.object({ filename: z.string(), format: z.enum(['csv', 'ndjson']), rowCount: z.number().int(), truncated: z.boolean(), content: z.string() });
 

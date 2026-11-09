@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, PageQuery, Timestamp, pageResult } from './common.ts';
+import { Id, PageQuery, Timestamp, TimestampIn, pageResult } from './common.ts';
 import { EventRecord } from './events.ts';
 
 // ---- property conditions (shared by filters and custom metrics) --------------------------------------------------------
@@ -52,15 +52,15 @@ export const AGGREGATE_MEASUREMENTS = ['count', 'unique', 'sum_value', 'avg_valu
 export const INTERVALS = ['hour', 'day', 'week', 'month'] as const;
 export const MetricAggregateQuery = z.object({
   /** An event name, a custom metric id, or `mapped:<role>`. */
-  metric: z.string().min(1).max(128),
+  metric: z.string().min(1).max(128).describe('An event name, a custom metric id (a name alone is read as an event name), or mapped:<role>'),
   measurement: z.enum(AGGREGATE_MEASUREMENTS).default('count'),
   /** Event property summed or averaged by `sum_property` / `avg_property`. */
   measurementProperty: z.string().min(1).max(128).optional(),
   interval: z.enum(INTERVALS).default('day'),
   /** Breakdown: an event property key, or `$source` / `$currency`. */
   by: z.string().min(1).max(128).optional(),
-  from: Timestamp,
-  to: Timestamp,
+  from: TimestampIn,
+  to: TimestampIn,
   timezone: z.string().min(1).max(64).default('UTC'),
   filter: z.array(PropertyCondition).max(10).default([]),
   /** Largest number of breakdown values returned (the rest are dropped). */

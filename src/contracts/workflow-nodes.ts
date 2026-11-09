@@ -1,32 +1,44 @@
 import { z } from 'zod';
-import { Channel, Id, Purpose, ReplyToList } from './common.ts';
+import { Channel, DateTimeIn, Id, Purpose, ReplyToList } from './common.ts';
 import { PropertyCondition } from './metrics.ts';
 import { PushExtras, PushPlatform } from './push.ts';
+import { PostcardDesign } from './postcards.ts';
 import { SegmentDefinition } from './segments.ts';
+import { type PickerKind, pick } from './pickers.ts';
+import { TaskKind } from './outbound.ts';
 
 export const NodeId = z.string().min(1).max(64);
+/** Config values that name another entity carry a picker hint (pickers.ts) so the builder offers live choices. */
+export const refId = (kind: PickerKind) => pick(Id, kind);
+export const EventRef = pick(z.string().min(1).max(128), 'event');
+export const TagRef = pick(z.string().min(1).max(64), 'tag');
+export const FieldRef = pick(z.string().min(1).max(128), 'field');
+export const ZoneRef = pick(z.string().max(64), 'timezone');
+const StepRef = pick(NodeId, 'node');
+/** A dot path into the trigger event, e.g. `properties.items`. */
+const EventPath = pick(z.string().min(1).max(128), 'event_path');
 const Pos = z.object({ x: z.number(), y: z.number() }).optional();
-const Route = z.object({ connectionId: Id.optional(), poolId: Id.optional(), routePolicyId: Id.optional() });
+const Route = z.object({ connectionId: refId('connection').optional(), poolId: refId('sender_pool').optional(), routePolicyId: refId('route_policy').optional() });
 
 export const Duration = z.object({ amount: z.number().int().min(0).max(3650 * 24 * 60), unit: z.enum(['minutes', 'hours', 'days', 'weeks']) });
 export type Duration = z.infer<typeof Duration>;
 
 const Cmp = { op: z.enum(['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'exists', 'not_exists']), value: z.unknown().optional() };
 export const Condition = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('field'), field: z.string().min(1).max(128), ...Cmp }),
-  z.object({ kind: z.literal('tag'), name: z.string().min(1).max(64) }),
-  z.object({ kind: z.literal('in_list'), listId: Id }),
-  z.object({ kind: z.literal('in_segment'), segmentId: Id }),
+  z.object({ kind: z.literal('field'), field: FieldRef, ...Cmp }),
+  z.object({ kind: z.literal('tag'), name: TagRef }),
+  z.object({ kind: z.literal('in_list'), listId: refId('list') }),
+  z.object({ kind: z.literal('in_segment'), segmentId: refId('segment') }),
   z.object({ kind: z.literal('consent'), channel: Channel, purpose: Purpose.default('marketing') }),
-  z.object({ kind: z.literal('trigger'), path: z.string().min(1).max(128), ...Cmp }),
+  z.object({ kind: z.literal('trigger'), path: EventPath, ...Cmp }),
   z.object({ kind: z.literal('var'), key: z.string().min(1).max(64), ...Cmp }),
   z.object({ kind: z.literal('definition'), definition: SegmentDefinition }),
   /** The triggering profile update touched `field` (and, with `from` / `to`, the recorded old / new value of that field equal them). Only meaningful for profile_updated entries. */
-  z.object({ kind: z.literal('field_changed'), field: z.string().min(1).max(128), from: z.unknown().optional(), to: z.unknown().optional() }),
+  z.object({ kind: z.literal('field_changed'), field: FieldRef, from: z.unknown().optional(), to: z.unknown().optional() }),
   /** Is (or was) the profile inside another journey? `ever` = any enrollment, `completed` = finished it. */
-  z.object({ kind: z.literal('in_workflow'), workflowId: Id, state: z.enum(['active', 'completed', 'ever']).default('active') }),
+  z.object({ kind: z.literal('in_workflow'), workflowId: refId('workflow'), state: z.enum(['active', 'completed', 'ever']).default('active') }),
   /** Weekday (1 = Monday .. 7 = Sunday) and/or time-of-day window in `tz` (default: the flow zone). Window may wrap midnight. */
-  z.object({ kind: z.literal('time'), weekdays: z.array(z.number().int().min(1).max(7)).optional(), startMin: z.number().int().min(0).max(1440).optional(), endMin: z.number().int().min(0).max(1440).optional(), tz: z.string().max(64).optional() }),
+  z.object({ kind: z.literal('time'), weekdays: z.array(z.number().int().min(1).max(7)).optional(), startMin: z.number().int().min(0).max(1440).optional(), endMin: z.number().int().min(0).max(1440).optional(), tz: ZoneRef.optional() }),
   /** Compare a date (profile field, trigger path or var) with now: before/after/today, within N days either way, or an anniversary (month and day) within N days. */
   /** The contact has at least one push device that can receive (a valid token with notifications allowed), optionally on one platform. */
   z.object({ kind: z.literal('push_token'), platform: PushPlatform.optional() }),
@@ -38,12 +50,12 @@ export const Condition = z.discriminatedUnion('kind', [
 export type Condition = z.infer<typeof Condition>;
 
 const Send = {
-  templateId: Id,
+  templateId: refId('template'),
   versionId: Id.optional(),
   route: Route,
-  topicId: Id.optional(),
+  topicId: refId('topic').optional(),
   /** Sequences: continue the thread of this earlier email step. */
-  replyToStep: NodeId.optional(),
+  replyToStep: StepRef.optional(),
   /** What to do when delivery blocks the send (no consent, suppressed, ...). `continue` follows `on_blocked` if wired, else `next`. */
   onBlocked: z.enum(['continue', 'exit']).default('continue'),
   /** When the send itself errors (render failure, provider rejection raised synchronously) carry on to `next` instead of failing the enrollment. */
@@ -55,14 +67,14 @@ const Send = {
   /** Retry a send that errors (render failure, provider refusal) up to this many times, 5 min apart and doubling, before `skipOnFailure` or failing. */
   retries: z.number().int().min(0).max(5).optional(),
   /** Send from this verified sender of the route instead of its default. */
-  senderIdentityId: Id.optional(),
+  senderIdentityId: refId('sender').optional(),
   replyTo: ReplyToList.optional(),
   /** Transactional / operational only: add RFC 8058 one-click unsubscribe headers. Marketing and prospecting always carry them. */
   oneClickUnsubscribe: z.boolean().optional(),
 };
 const Empty = z.object({}).default({});
 /** What reaching a goal means: an event (with property filter) or a segment definition. */
-export const GoalMatch = z.object({ kind: z.enum(['event', 'segment']), eventName: z.string().max(128).optional(), filter: z.record(z.string(), z.unknown()).optional(), definition: SegmentDefinition.optional() });
+export const GoalMatch = z.object({ kind: z.enum(['event', 'segment']), eventName: pick(z.string().max(128), 'event').optional(), filter: z.record(z.string(), z.unknown()).optional(), definition: SegmentDefinition.optional() });
 export type GoalMatch = z.infer<typeof GoalMatch>;
 /** Targeted notification: in-app always, plus email to members/addresses, Slack incoming webhook, or any webhook. Title, subject and body are liquid. */
 const Notify = z.object({
@@ -70,7 +82,7 @@ const Notify = z.object({
   subject: z.string().max(200).optional(),
   body: z.string().max(5000).optional(),
   to: z.object({
-    userIds: z.array(Id).max(20).default([]), emails: z.array(z.email()).max(20).default([]),
+    userIds: z.array(refId('user')).max(20).default([]), emails: z.array(z.email()).max(20).default([]),
     slackWebhookUrl: z.url().optional(), webhookUrl: z.url().optional(),
     /** Discord channel webhook (https://discord.com/api/webhooks/...). */
     discordWebhookUrl: z.url().regex(/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\//).optional(),
@@ -80,8 +92,14 @@ const Notify = z.object({
 const OnExceed = z.enum(['hold', 'branch', 'exit']).default('hold');
 const Weight = z.number().int().min(0).max(1000);
 /** `onClosed: exit` ends the journey when the window is closed instead of waiting for it to open. */
-const Hours = z.object({ startMin: z.number().int().min(0).max(1440), endMin: z.number().int().min(0).max(1440), weekdays: z.array(z.number().int().min(1).max(7)).optional(), tz: z.string().optional(), onClosed: z.enum(['wait', 'exit']).optional() });
+const Hours = z.object({ startMin: z.number().int().min(0).max(1440), endMin: z.number().int().min(0).max(1440), weekdays: z.array(z.number().int().min(1).max(7)).optional(), tz: ZoneRef.optional(), onClosed: z.enum(['wait', 'exit']).optional() });
 const Action = z.object({ title: z.string().max(200).optional(), params: z.record(z.string(), z.unknown()).default({}) }).default({ params: {} });
+/** Task steps: the kind, who does it (empty = the contact's owner) and notes; `params` keeps the older free-form inputs (LinkedIn steps, voicemail clips). */
+const TaskAction = z.object({
+  title: z.string().max(200).optional(), kind: TaskKind.optional(), assigneeUserId: refId('user').optional(), notes: z.string().max(5000).optional(),
+  params: z.record(z.string(), z.unknown()).default({}),
+}).default({ params: {} });
+const OwnerAction = z.object({ title: z.string().max(200).optional(), userId: refId('user').optional(), params: z.record(z.string(), z.unknown()).default({}) }).default({ params: {} });
 
 /** `name`: the step's display name on the canvas (the type's label when empty). */
 const node = <T extends string, C extends z.ZodType>(type: T, config: C) =>
@@ -97,18 +115,26 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   /** Mobile or web push (a content template of channel push: title = subject, body = text). Needs push consent; fans out to every valid device token. */
   node('send_push', z.object({ ...Send, purpose: Purpose.optional(), push: PushExtras.optional() })),
   node('send_transactional_email', z.object(Send)),
+  /**
+   * Printed postcard through a print connection (Lob, PostGrid). Front and back are liquid HTML; people without a complete postal address,
+   * with a revoked consent or a suppression are skipped (`on_blocked`). One card per visit: the step's action key is the idempotency key.
+   */
+  node('send_postcard', z.object({
+    design: PostcardDesign, route: Route, purpose: Purpose.optional(),
+    onBlocked: z.enum(['continue', 'exit']).default('continue'), skipOnFailure: z.boolean().optional(),
+  })),
   node('notify_internal', Notify),
-  node('create_task', Action),
+  node('create_task', TaskAction),
   node('send_webhook', z.object({
     /** Saved call (Settings > Webhooks > Call templates): its url, method, headers, body and secrets are the defaults; fields set here win. */
-    webhookTemplateId: Id.optional(),
+    webhookTemplateId: refId('webhook_template').optional(),
     url: z.url().optional(),
     method: z.enum(['POST', 'PUT', 'PATCH', 'DELETE', 'GET', 'HEAD', 'OPTIONS']).optional(),
     /** How the body is sent: JSON (default), form-encoded fields of `body`, or `rawBody` as plain text or XML (liquid, so `{{ profile.email }}` works). */
     bodyFormat: z.enum(['json', 'form', 'text', 'xml']).default('json'),
     rawBody: z.string().max(100_000).optional(),
     /** Extra headers whose values come from named integration secrets (Settings > Integrations), opened at send time. */
-    authHeaders: z.array(z.object({ header: z.string().regex(/^[A-Za-z0-9-]{1,64}$/), secretName: z.string().min(1).max(100), prefix: z.string().max(40).optional() })).max(10).optional(),
+    authHeaders: z.array(z.object({ header: z.string().regex(/^[A-Za-z0-9-]{1,64}$/), secretName: pick(z.string().min(1).max(100), 'secret'), prefix: z.string().max(40).optional() })).max(10).optional(),
     body: z.record(z.string(), z.unknown()).optional(), headers: z.record(z.string(), z.string()).optional(),
     /** Total attempts including the first; transient failures (network, 5xx, 429) are retried with backoff. */
     maxAttempts: z.number().int().min(1).max(8).default(5),
@@ -118,7 +144,7 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     signingSecretSealed: z.string().max(2000).optional(),
     signingSecretSet: z.boolean().optional(),
     /** Copy values out of a JSON response onto the profile: `path` is a dot path into the response. */
-    responseMap: z.array(z.object({ path: z.string().min(1).max(200), field: z.string().min(1).max(128) })).max(20).default([]),
+    responseMap: z.array(z.object({ path: z.string().min(1).max(200), field: FieldRef })).max(20).default([]),
     /** Values for the inputs a custom-action call template declares; liquid, so `{{ profile.email }}` maps a profile field in. */
     inputFields: z.record(z.string(), z.string().max(2000)).default({}),
     /** Hold the contact until the call finishes so later steps see the mapped attributes; `failed` (optional edge) is followed on give-up or timeout. */
@@ -129,7 +155,7 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   }).refine((c) => c.url || c.webhookTemplateId, { message: 'Give a url or choose a call template', path: ['url'] })),
   node('add_note', z.object({ body: z.string().min(1).max(5000) })),
   /** Queue an in-app message for the contact: shown on their next app/site visit (the app asks for messages) unless it expires first. */
-  node('show_in_app', z.object({ messageId: Id, expiresInHours: z.number().int().min(1).max(24 * 30).default(24) })),
+  node('show_in_app', z.object({ messageId: refId('in_app'), expiresInHours: z.number().int().min(1).max(24 * 30).default(24) })),
   // logic
   node('if_else', z.object({ condition: Condition })),
   /** `first`: first matching path wins. `weighted`: among all matching paths pick one by weight (persisted per profile); none match -> else. */
@@ -139,7 +165,7 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   })),
   node('random_split', z.object({ splits: z.array(z.object({ key: z.string().min(1).max(32), weight: Weight })).min(2).max(26) })),
   node('ab_test', z.object({
-    experimentId: Id.optional(),
+    experimentId: refId('experiment').optional(),
     variants: z.array(z.object({ key: z.string().min(1).max(32), weight: Weight })).min(2).max(26),
     /** Pick the winner by `metric` once `afterHours` have passed, each variant has `minRecipients` sends and the best one is ahead with confidence `pBest`; later entrants then all take the winner. Applies when the test first runs. */
     autoWinner: z.object({
@@ -152,26 +178,30 @@ export const WorkflowNode = z.discriminatedUnion('type', [
       stopAt: z.iso.datetime({ offset: true }).optional(),
       /** Gradually send more new people to the better-looking variants while the test runs. */
       shift: z.boolean().optional(),
+      /** Harm checks against the first variant (the control): a variant likely worse on one is never picked. */
+      guardrails: z.array(z.object({ metric: z.enum(['unsubscribe', 'complaint', 'bounce']), threshold: z.number().min(0).max(1).default(0) })).max(3).optional(),
+      /** End the test early on the control when a variant trips a guardrail. */
+      stopOnGuardrail: z.boolean().optional(),
     }).optional(),
   })),
   /** Loop over a list in the trigger event (e.g. `properties.items` of an order): each pass exits `item` with `vars.item` set; wire the body back to this step. `done` runs after the last one. */
-  node('for_each_item', z.object({ path: z.string().min(1).max(128), max: z.number().int().min(1).max(25).default(10) })),
+  node('for_each_item', z.object({ path: EventPath, max: z.number().int().min(1).max(25).default(10) })),
   /** Look up one row in an uploaded collection (a table of rows) by a column value; `found` / `not_found` branch. The row is kept as `vars.lookup_<saveAs>` for later conditions and messages. */
   node('query_collection', z.object({
-    collectionId: Id,
-    column: z.string().min(1).max(128),
+    collectionId: refId('collection'),
+    column: pick(z.string().min(1).max(128), 'collection_column'),
     /** Liquid, compared as text without regard to case, for example `{{ profile.country }}`. */
     value: z.string().min(1).max(500).default('{{ profile.emailPrimary }}'),
     saveAs: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/, 'lowercase letters, digits, underscore').default('row'),
   })),
-  node('switch', z.object({ field: z.string().min(1).max(128), cases: z.array(z.string().max(128)).min(1).max(25) })),
+  node('switch', z.object({ field: FieldRef, cases: z.array(pick(z.string().max(128), 'field_value')).min(1).max(25) })),
   node('merge', Empty),
   /** With `condition`: jump only when it holds, otherwise continue on `next` (optional edge). */
-  node('goto', z.object({ target: NodeId, condition: Condition.optional() })),
+  node('goto', z.object({ target: StepRef, condition: Condition.optional() })),
   /** Remove the profile from another journey (the mirror of enroll_workflow). */
-  node('exit_workflow', z.object({ workflowId: Id, reason: z.string().max(64).default('exited_by_journey') })),
+  node('exit_workflow', z.object({ workflowId: refId('workflow'), reason: z.string().max(64).default('exited_by_journey') })),
   node('exit', z.object({ reason: z.string().max(64).default('exit_node') }).default({ reason: 'exit_node' })),
-  node('enroll_workflow', z.object({ workflowId: Id })),
+  node('enroll_workflow', z.object({ workflowId: refId('workflow') })),
   // timing
   /** After the wait, optionally move on to a time of day (`atTime`, 24-hour) and/or the next allowed weekday (1 = Monday .. 7 = Sunday), in the recipient's zone. */
   node('delay', z.object({
@@ -179,19 +209,19 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     atTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM').optional(),
     weekdays: z.array(z.number().int().min(1).max(7)).max(7).optional(),
     /** Time zone for the time of day and the days; empty = the recipient's own (falling back to the journey's zone). */
-    tz: z.string().max(64).optional(),
+    tz: ZoneRef.optional(),
   })),
   /** `yearly`: wait for the next occurrence of the date's month and day (birthdays, renewals). */
-  node('wait_until_date', z.object({ attribute: z.string().max(128).optional(), at: z.coerce.date().optional(), offsetDays: z.number().int().default(0), yearly: z.boolean().default(false) })),
+  node('wait_until_date', z.object({ attribute: pick(z.string().max(128), 'field').optional(), at: DateTimeIn().optional(), offsetDays: z.number().int().default(0), yearly: z.boolean().default(false) })),
   /** Collect contacts into shared release windows (aligned to the clock) and let each window go together. */
   node('batch', z.object({ window: Duration })),
   /** Hold until the hour this person most often engages (campaign send-time optimisation), within the next 24 h. */
   node('wait_best_send_time', Empty),
   /** `filter` is equality only; `conditions` add operators (neq, gt, contains, exists, between, ...) over the event properties. */
-  node('wait_for_event', z.object({ eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional(), timeout: Duration })),
+  node('wait_for_event', z.object({ eventName: EventRef, filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional(), timeout: Duration })),
   /** Resume on whichever listed event arrives first (path `event:<key>`), or `timeout`. */
   node('wait_for_any_event', z.object({
-    events: z.array(z.object({ key: z.string().min(1).max(32), eventName: z.string().min(1).max(128), filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional() })).min(2).max(10),
+    events: z.array(z.object({ key: z.string().min(1).max(32), eventName: EventRef, filter: z.record(z.string(), z.unknown()).optional(), conditions: z.array(PropertyCondition).max(10).optional() })).min(2).max(10),
     timeout: Duration,
   })),
   node('wait_until_condition', z.object({ definition: SegmentDefinition, timeout: Duration })),
@@ -200,19 +230,19 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     branches: z.array(z.object({ key: z.string().min(1).max(32), definition: SegmentDefinition })).min(2).max(10), timeout: Duration,
   })),
   /** Wait until the profile's `field` changes (optionally from / to a value, compared with the recorded old / new values); else `timeout`. Only changes made after the wait begins count. */
-  node('wait_for_attribute_change', z.object({ field: z.string().min(1).max(128), from: z.unknown().optional(), to: z.unknown().optional(), timeout: Duration })),
+  node('wait_for_attribute_change', z.object({ field: FieldRef, from: z.unknown().optional(), to: z.unknown().optional(), timeout: Duration })),
   /** Hold until the next listed weekday (1 = Monday .. 7 = Sunday) at `time` in `tz` (default: the recipient's / flow zone). */
-  node('wait_until_weekday', z.object({ weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM'), tz: z.string().max(64).optional() })),
+  node('wait_until_weekday', z.object({ weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM'), tz: ZoneRef.optional() })),
   /** Wait until this person is predicted to need the product again: the product's typical gap between orders (a per-product number set here wins, else measured from this product's order history, else from all products' repeat orders, else `fallbackDays`), minus `bufferDays`. */
   node('wait_until_reorder', z.object({
-    overrides: z.array(z.object({ productId: z.string().min(1).max(128), days: z.number().int().min(1).max(3650) })).max(100).default([]),
+    overrides: z.array(z.object({ productId: pick(z.string().min(1).max(128), 'product'), days: z.number().int().min(1).max(3650) })).max(100).default([]),
     fallbackDays: z.number().int().min(1).max(3650).default(30),
     minOrders: z.number().int().min(2).max(50).default(3),
     bufferDays: z.number().int().min(0).max(365).default(0),
   })),
   node('random_delay', z.object({ min: Duration, max: Duration })),
   /** Wait until the profile opens/clicks/replies to a message from this journey (optionally one specific send step). */
-  node('wait_for_engagement', z.object({ kind: z.enum(['open', 'click', 'reply', 'delivered', 'bounced', 'complained']), stepKey: NodeId.optional(), timeout: Duration })),
+  node('wait_for_engagement', z.object({ kind: z.enum(['open', 'click', 'reply', 'delivered', 'bounced', 'complained']), stepKey: StepRef.optional(), timeout: Duration })),
   node('business_hours', Hours),
   node('send_window', Hours),
   /** Only let people through between two dates: before `from` hold (or exit), after `to` exit. */
@@ -220,33 +250,33 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     .refine((c) => c.from || c.to, { message: 'Give a start date, an end date, or both', path: ['from'] })
     .refine((c) => !c.from || !c.to || c.from < c.to, { message: 'The end must be after the start', path: ['to'] })),
   // state
-  node('add_tag', z.object({ name: z.string().min(1).max(64) })),
-  node('remove_tag', z.object({ name: z.string().min(1).max(64) })),
+  node('add_tag', z.object({ name: TagRef })),
+  node('remove_tag', z.object({ name: TagRef })),
   /** `set` is the simple form; `ops` adds increment / append / unset. String values are liquid (`{{ event.properties.plan }}`). */
   node('update_profile', z.object({
     set: z.record(z.string(), z.unknown()).default({}),
-    ops: z.array(z.object({ op: z.enum(['set', 'increment', 'append', 'unset']), field: z.string().min(1).max(128), value: z.unknown().optional() })).max(30).default([]),
+    ops: z.array(z.object({ op: z.enum(['set', 'increment', 'append', 'unset']), field: FieldRef, value: z.unknown().optional() })).max(30).default([]),
   })),
-  node('add_to_list', z.object({ listId: Id })),
-  node('remove_from_list', z.object({ listId: Id })),
+  node('add_to_list', z.object({ listId: refId('list') })),
+  node('remove_from_list', z.object({ listId: refId('list') })),
   /** Copy a value from the trigger event (dot path into the event, e.g. `properties.plan`) onto a profile field. */
-  node('update_by_event', z.object({ field: z.string().min(1).max(128), path: z.string().min(1).max(128) })),
-  node('set_field', z.object({ field: z.string().min(1).max(128), value: z.unknown() })),
-  node('score', z.object({ delta: z.number().int().min(-1000).max(1000), field: z.string().default('score') })),
+  node('update_by_event', z.object({ field: FieldRef, path: EventPath })),
+  node('set_field', z.object({ field: FieldRef, value: z.unknown() })),
+  node('score', z.object({ delta: z.number().int().min(-1000).max(1000), field: pick(z.string(), 'field').default('score') })),
   /** Move the contact's score in a published score model by `delta` (history reason `journey`). */
-  node('adjust_score', z.object({ modelId: Id, delta: z.number().int().min(-1000).max(1000) })),
+  node('adjust_score', z.object({ modelId: refId('score'), delta: z.number().int().min(-1000).max(1000) })),
   /** Company of the contact (leads module); skipped when the contact has none. */
   node('update_company', z.object({ set: z.object({ name: z.string().max(200).optional(), industry: z.string().max(100).optional(), sizeBand: z.string().max(50).optional(), country: z.string().length(2).optional() }) })),
   /** Put the contact at an existing company (replaces its current link). */
-  node('add_to_company', z.object({ companyId: Id })),
+  node('add_to_company', z.object({ companyId: refId('company') })),
   /** Push the contact to a connected CRM now (same upsert the sync uses); skipped when unchanged. */
-  node('push_integration', z.object({ integrationId: Id })),
+  node('push_integration', z.object({ integrationId: refId('integration') })),
   /** Syntax, disposable-domain and MX check on the primary address (no paid lookup). `rejectRole` also sends info@/sales@ style addresses down `invalid`. */
   node('validate_email', z.object({ rejectRole: z.boolean().default(false) })),
   /** Erases the contact for good (the DSAR erase: address stays suppressed). Runs after this step commits; `confirm` must be ticked so a journey never deletes people by accident. */
   node('delete_contact', z.object({ confirm: z.boolean().default(false).refine((v) => v, 'Tick to confirm this journey may permanently delete contacts') })),
   node('company_branch', z.object({ field: z.enum(['name', 'domain', 'industry', 'sizeBand', 'country', 'stage', 'suppressed']), ...Cmp })),
-  node('set_lifecycle', z.object({ stage: z.string().min(1).max(64) })),
+  node('set_lifecycle', z.object({ stage: pick(z.string().min(1).max(64), 'lifecycle_stage') })),
   node('update_consent', z.object({ channel: Channel, purpose: Purpose.default('marketing'), status: z.enum(['granted', 'revoked']), proofSource: z.enum(['trigger_event', 'form']).optional() })),
   // control
   /** `skipAhead`: a contact who meets `match` (or the flow goal) anywhere earlier in the journey jumps straight here. */
@@ -273,42 +303,42 @@ export const WorkflowNode = z.discriminatedUnion('type', [
   node('stop_on_bounce', Empty),
   node('stop_on_unsubscribe', Empty),
   node('classify_reply', Action),
-  node('assign_owner', Action),
+  node('assign_owner', OwnerAction),
   node('rotate_mailbox', Action),
-  node('follow_up_task', Action),
+  node('follow_up_task', TaskAction),
   /** Add (or take) points on the account score of the contact's primary company (leads module). */
   node('score_company', z.object({ delta: z.number().int().min(-1000).max(1000) })),
   /** Score the contact's company when the journey was started by a form submission (optionally only that form); otherwise skipped. */
-  node('score_company_from_form', z.object({ delta: z.number().int().min(-1000).max(1000), formId: Id.optional() })),
+  node('score_company_from_form', z.object({ delta: z.number().int().min(-1000).max(1000), formId: refId('form').optional() })),
   /** WS09: show a content-only site message to this contact on their next visit (held until `expiresInHours`). */
-  node('send_site_message', z.object({ siteMessageId: Id, expiresInHours: z.number().int().min(1).max(720).default(168) })),
+  node('send_site_message', z.object({ siteMessageId: refId('site_message'), expiresInHours: z.number().int().min(1).max(720).default(168) })),
   /** WS09: put content into this contact's web content slot `slotKey`; it wins over the slot's rules until it expires. */
   node('push_slot_content', z.object({ slotKey: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/), html: z.string().min(1).max(20_000), expiresInHours: z.number().int().min(1).max(720).default(168) })),
   // WS04: object journeys, code and user-defined actions, native app actions. Text values are liquid (`{{ profile.email }}`).
   /** Create, or update when it exists, the custom object of `typeKey` with this external id; `link` also relates it to the contact. */
   node('upsert_object', z.object({
-    typeKey: z.string().min(1).max(64), externalId: z.string().min(1).max(500), name: z.string().max(500).optional(),
+    typeKey: pick(z.string().min(1).max(64), 'object_type'), externalId: z.string().min(1).max(500), name: z.string().max(500).optional(),
     attributes: z.record(z.string(), z.string().max(2000)).default({}), link: z.boolean().default(true), role: z.string().max(64).optional(),
   })),
   /** Add or remove the contact's relationship to an existing custom object (by external id). `failed` (optional edge) when the object does not exist. */
-  node('relate_object', z.object({ typeKey: z.string().min(1).max(64), externalId: z.string().min(1).max(500), op: z.enum(['link', 'unlink']).default('link'), role: z.string().max(64).optional() })),
+  node('relate_object', z.object({ typeKey: pick(z.string().min(1).max(64), 'object_type'), externalId: z.string().min(1).max(500), op: z.enum(['link', 'unlink']).default('link'), role: z.string().max(64).optional() })),
   /** Run a code action (Settings > Webhooks > Call templates, kind code) and wait for it; its outputs land on the profile for later steps. `failed` on FAIL_CONTINUE, give-up or timeout. */
   node('run_code', z.object({
-    webhookTemplateId: Id, inputFields: z.record(z.string(), z.string().max(2000)).default({}), maxAttempts: z.number().int().min(1).max(8).default(3),
+    webhookTemplateId: refId('webhook_template'), inputFields: z.record(z.string(), z.string().max(2000)).default({}), maxAttempts: z.number().int().min(1).max(8).default(3),
     responseTimeout: Duration.default({ amount: 10, unit: 'minutes' }),
   })),
   /** A workspace-defined action type (Automation > Custom types): fills its fields and runs the action behind it, waiting for the outcome. */
-  node('custom_action', z.object({ typeKey: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), values: z.record(z.string(), z.string().max(2000)).default({}), responseTimeout: Duration.default({ amount: 10, unit: 'minutes' }) })),
+  node('custom_action', z.object({ typeKey: pick(z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), 'custom_action'), values: z.record(z.string(), z.string().max(2000)).default({}), responseTimeout: Duration.default({ amount: 10, unit: 'minutes' }) })),
   /** Google Sheets: append one row. `secretName` holds a Google access token with the spreadsheets scope. */
-  node('sheets_append_row', z.object({ spreadsheetId: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/), sheet: z.string().min(1).max(100).default('Sheet1'), values: z.array(z.string().max(2000)).min(1).max(50), secretName: z.string().min(1).max(100) })),
+  node('sheets_append_row', z.object({ spreadsheetId: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/), sheet: z.string().min(1).max(100).default('Sheet1'), values: z.array(z.string().max(2000)).min(1).max(50), secretName: pick(z.string().min(1).max(100), 'secret') })),
   /** Calendly: create a single-use scheduling link for an event type and save its URL on the profile (`field`) for the next message. `secretName` holds a Calendly personal access token. */
-  node('calendly_link', z.object({ eventTypeUri: z.url().max(500), secretName: z.string().min(1).max(100), field: z.string().min(1).max(128).default('calendly_link'), maxEventCount: z.number().int().min(1).max(10).default(1) })),
+  node('calendly_link', z.object({ eventTypeUri: z.url().max(500), secretName: pick(z.string().min(1).max(100), 'secret'), field: pick(z.string().min(1).max(128), 'field').default('calendly_link'), maxEventCount: z.number().int().min(1).max(10).default(1) })),
   // WS14 channels
   /** Slack message from an installed workspace app: to a channel, or as a DM to the contact (looked up by their email). Text is liquid. */
-  node('send_slack', z.object({ installId: Id, slackTemplateId: Id.optional(), text: z.string().max(3000).optional(), to: z.enum(['channel', 'contact']).default('channel'), channel: z.string().max(80).optional() })),
+  node('send_slack', z.object({ installId: refId('slack_install'), slackTemplateId: refId('slack_template').optional(), text: z.string().max(3000).optional(), to: z.enum(['channel', 'contact']).default('channel'), channel: z.string().max(80).optional() })),
   /** Send a WhatsApp Flow and wait for the answer: branches match one answer field; `timeout` when no answer, `blocked` when it could not be sent. */
   node('send_whatsapp_flow', z.object({
-    flowId: Id, purpose: Purpose.default('marketing'), timeout: Duration.default({ amount: 1, unit: 'days' }),
+    flowId: refId('wa_flow'), purpose: Purpose.default('marketing'), timeout: Duration.default({ amount: 1, unit: 'days' }),
     branches: z.array(z.object({ key: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), field: z.string().min(1).max(64), value: z.string().max(200) })).max(10).default([]),
   })),
   /** Show a developer-defined component in the app and wait until it reports one of `events` (handle event:<name>) or `timeout`. */
@@ -317,7 +347,7 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     events: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(10), timeout: Duration.default({ amount: 7, unit: 'days' }),
   })),
   /** Add the contact to, or remove them from, an ad platform custom audience. Contacts who opted out of ads are never added. */
-  node('ad_audience', z.object({ adAccountId: Id, audienceId: z.string().min(1).max(200), op: z.enum(['add', 'remove']).default('add') })),
+  node('ad_audience', z.object({ adAccountId: refId('ad_account'), audienceId: z.string().min(1).max(200), op: z.enum(['add', 'remove']).default('add') })),
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNode>;
 export type NodeType = WorkflowNode['type'];

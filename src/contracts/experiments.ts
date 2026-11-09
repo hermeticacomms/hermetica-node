@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { Channel, DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
 
 export const ExperimentKind = z.enum(['message_variant', 'path_split', 'holdout', 'send_time']);
 export const ExperimentMethod = z.enum(['bayesian_beta', 'frequentist_ztest']);
@@ -27,6 +27,8 @@ export const AutoSelect = z.object({
   stopAt: z.iso.datetime({ offset: true }).optional(),
   /** While running, send more of the new traffic to the variants that look better (each keeps a share to keep learning). */
   shift: z.boolean().optional(),
+  /** Stop early and keep the control when a variant (with the minimum sample) is likely worse on a guardrail, even before `afterHours`. Off = guardrails only block a winner. */
+  stopOnGuardrail: z.boolean().optional(),
 });
 export type AutoSelect = z.infer<typeof AutoSelect>;
 
@@ -89,6 +91,12 @@ export const HoldoutBody = z.object({
   scopeId: Id.nullish(),
 });
 export const HoldoutDto = Row;
+/** Incrementality: who of the held-back vs treated people did `event` after being assigned; the sample floors gate any recommendation. */
+export const HoldoutReportQuery = z.object({
+  event: z.string().min(1).max(128).default('purchase'),
+  minPeople: z.coerce.number().int().min(1).max(1_000_000).default(100),
+  minConversions: z.coerce.number().int().min(1).max(1_000_000).default(20),
+});
 export const HoldoutPage = pageResult(HoldoutDto);
 
 /** Frequency caps (T6.3). `windowHours` instead of ms so the API stays human-sized. */
@@ -106,6 +114,8 @@ export const FrequencySettingsBody = z.object({
   scopeId: Id.nullish(),
   caps: z.array(FrequencyCapInput).max(20).default([]),
   smartSending: SmartSending.nullish(),
+  /** Workspace only, off by default: one cap over prospecting + marketing sends to the same person on a channel together. Omitted = keep the saved value; null = off. */
+  crossPurpose: z.object({ max: z.number().int().min(1).max(1000), windowHours: z.number().int().min(1).max(24 * 30) }).nullish(),
 });
 export const FrequencySettingsDto = Row;
 export const FrequencySettingsList = z.object({ items: z.array(FrequencySettingsDto) });
@@ -115,7 +125,7 @@ export const SendTimeRecommendation = z.object({ profileId: Id, hour: z.number()
 export const ResendBody = z.object({
   to: z.enum(['non_openers', 'non_clickers', 'new_subscribers', 'non_purchasers']),
   subject: z.string().trim().min(1).max(998),
-  at: z.coerce.date().optional(),
+  at: DateTimeIn().optional(),
 });
 export const AbTestConfig = z.object({
   /** 100 = everyone gets a variant and you pick the winner by hand (nothing is held back). */
@@ -124,6 +134,10 @@ export const AbTestConfig = z.object({
   waitHours: z.number().int().min(1).max(48).default(4),
   auto: z.boolean().default(true),
   method: ExperimentMethod.default('bayesian_beta'),
+  /** Auto mode: chance of being best the leader needs before it is rolled out (unset = 0.95). */
+  confidence: z.number().min(0.5).max(0.999).optional(),
+  /** Guardrail: a variant whose unsubscribe/complaint/bounce rate is this much (absolute share) above control fails (unset = 0.005). */
+  guardrail: z.number().min(0.001).max(0.1).optional(),
 });
 export type AbTestConfig = z.infer<typeof AbTestConfig>;
 export const RolloutBody = z.object({ winnerKey: z.string().min(1).max(32).optional() });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Channel, Id, Purpose, PageQuery, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { Block, BlockDoc } from './content-blocks.ts';
 import { LintResult } from './content-library.ts';
+import { RcsContent } from './rcs.ts';
 
 export const TemplateKind = z.enum(['blocks', 'html', 'text', 'sms']);
 export type TemplateKind = z.infer<typeof TemplateKind>;
@@ -27,6 +28,10 @@ export const TemplateVersionInput = z.object({
   replyTo: ReplyToList.nullable().optional(),
   /** Copy addresses. Honoured on transactional sends only: a copy shares the recipient's personal content and never consented. */
   cc: z.array(z.email().max(320)).max(10).optional(),
+  /** Email only: an AMP for Email document sent as a text/x-amp-html part next to the HTML (which stays the fallback). Checked at save. */
+  ampHtml: z.string().max(200_000).nullable().optional(),
+  /** SMS only: an RCS card and suggestion chips; the text body is the SMS fallback. */
+  rcs: RcsContent.nullable().optional(),
 });
 export type TemplateVersionInput = z.infer<typeof TemplateVersionInput>;
 
@@ -36,6 +41,9 @@ export const TemplateVersionDto = z.object({
   approvalStatus: z.enum(['none', 'pending', 'approved', 'rejected']), reviewComment: z.string().nullable(),
   createdBy: z.string().nullable(), createdAt: Timestamp, approvedBy: z.string().nullable(), approvedAt: Timestamp.nullable(),
   fromEmail: z.string().nullable().default(null), replyTo: z.string().nullable().default(null), cc: z.array(z.string()).default([]),
+  ampHtml: z.string().nullable().default(null), rcs: RcsContent.nullable().default(null),
+  /** Set when a reviewer confirmed this version is transactional despite offer wording (POST .../transactional-review). */
+  transactionalReviewedBy: z.string().nullable().default(null), transactionalReviewedAt: Timestamp.nullable().default(null),
 });
 
 export const TemplateDto = z.object({
@@ -49,13 +57,18 @@ export const CreateTemplateBody = z.object({
   kind: TemplateKind,
   /** Only with kind `sms`: `push` makes a push template (version subject = title, text = body). */
   channel: z.literal('push').optional(),
-  folder: z.string().max(200).nullable().optional(),
+  /** A top-level folder by name, created when missing (the same folder record `folderId` names). */
+  folder: z.string().trim().max(200).nullable().optional(),
+  folderId: Id.nullable().optional(),
   tags: z.array(z.string().max(64)).max(50).default([]),
+  /** Preference topic for this template's marketing sends that name no topic (as on PATCH). */
+  topicId: Id.nullable().optional(),
   version: TemplateVersionInput.optional(),
 });
 export const UpdateTemplateBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  folder: z.string().max(200).nullable().optional(),
+  /** Moves to the top-level folder of that name, created when missing; null takes it out of any folder. `folderId` wins when both are sent. */
+  folder: z.string().trim().max(200).nullable().optional(),
   tags: z.array(z.string().max(64)).max(50).optional(),
   archived: z.boolean().optional(),
   folderId: Id.nullable().optional(),

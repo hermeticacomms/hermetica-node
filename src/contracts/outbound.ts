@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { PostcardDesign } from './postcards.ts';
 
 export const ProspectStatus = z.enum(['new', 'contacted', 'replied', 'interested', 'meeting_booked', 'won', 'lost', 'not_interested', 'bounced', 'unsubscribed', 'do_not_contact']);
 export type ProspectStatus = z.infer<typeof ProspectStatus>;
@@ -68,7 +69,9 @@ const WhatsappStep = z.object({ type: z.literal('whatsapp'), templateId: Id, ver
  * limits and spacing as a LinkedIn message; a manual task without one), or a call task carrying the clip for a voicemail drop through the workspace's own Twilio.
  */
 const VoiceStep = z.object({ type: z.literal('voice'), clipId: Id, via: z.enum(['linkedin', 'voicemail']), message: z.string().max(4000).optional(), title: z.string().trim().max(200).optional(), ...Wait, ...Gate });
-const leafSteps = [EmailStep, WaitStep, TaskStep, JumpStep, SmsStep, WebhookStep, LinkedinStep, WhatsappStep, VoiceStep] as const;
+/** Printed postcard through a print connection (Lob, PostGrid). Prospects without a complete postal address, or suppressed, are skipped. */
+const PostcardStep = z.object({ type: z.literal('postcard'), design: PostcardDesign, connectionId: Id, ...Wait, ...Gate });
+const leafSteps = [EmailStep, WaitStep, TaskStep, JumpStep, SmsStep, WebhookStep, LinkedinStep, WhatsappStep, VoiceStep, PostcardStep] as const;
 /** A step that is not a branch: what a branch path may contain (one level of branching, no nesting). */
 export const SequenceLeafStep = z.discriminatedUnion('type', leafSteps);
 export type SequenceLeafStep = z.infer<typeof SequenceLeafStep>;
@@ -86,8 +89,8 @@ export const StopRules = z.object({
   onReply: z.enum(['human', 'any']).default('human'),
   onAutoReply: z.enum(['continue', 'pause']).default('continue'),
   onOoo: z.enum(['pause_until_return', 'continue', 'stop']).default('pause_until_return'),
-  /** A human reply from anyone at the same company domain: leave the other live enrollments there alone (default), end them, or pause them. */
-  onCompanyReply: z.enum(['none', 'stop', 'pause']).default('none'),
+  /** A human reply from anyone at the same company domain: end the other live enrollments there (default for new sequences), pause them, or leave them alone. */
+  onCompanyReply: z.enum(['none', 'stop', 'pause']).default('stop'),
 });
 export type StopRules = z.infer<typeof StopRules>;
 
@@ -115,6 +118,8 @@ export const SequenceSettings = z.object({
     sticky: z.boolean().default(true),
     /** Sticky mailbox became unavailable: pause the enrollment (default) or move it to another pool member (new thread). */
     onUnavailable: z.enum(['pause', 'reassign']).default('pause'),
+    /** ESP matching (unset = on): a new prospect on Gmail/Google Workspace gets a Google mailbox, on Outlook/M365 a Microsoft one, when such a mailbox has room today. */
+    matchProvider: z.boolean().optional(),
   }).default({ sticky: true, onUnavailable: 'pause' }),
   dailyNewLimit: z.number().int().min(1).max(100_000).optional(),
   /** Share (%) of `dailyNewLimit` held back for follow-ups, so new prospects can use only the rest. */
@@ -138,16 +143,18 @@ export const SequenceSettings = z.object({
   reviewBeforeSend: z.boolean().optional(),
   /** Per-message review gate: every rendered email waits in the review queue (never auto-sends) until approved, edited or rejected. */
   reviewEachMessage: z.boolean().optional(),
-  stop: StopRules.default({ onReply: 'human', onAutoReply: 'continue', onOoo: 'pause_until_return', onCompanyReply: 'none' }),
+  stop: StopRules.default({ onReply: 'human', onAutoReply: 'continue', onOoo: 'pause_until_return', onCompanyReply: 'stop' }),
   /** Sub-sequences: when a reply to this sequence is classified as `category`, start `sequenceId` for that person (ending their other live sequences when `stopCurrent`). Consent, dedupe and blocklists still apply. */
   onCategory: z.array(z.object({ category: ReplyCategory, sequenceId: Id, stopCurrent: z.boolean().default(true) })).max(10).optional(),
+  /** Positive reply -> opt-in ask: email the prospect a double opt-in link for `listId` (the list's confirmation email). Only their click grants marketing consent. */
+  optInAsk: z.object({ listId: Id, connectionId: Id.optional() }).optional(),
   /** Default owner for prospects this sequence enrolls who have none yet. */
   ownerUserId: Id.optional(),
   /** Reusable schedule object: when set, its window replaces `schedule` on save (and again when the schedule is edited). */
   scheduleId: Id.optional(),
   dedupe: DedupeRules.default({ crossSequence: 'skip', contactedWithinDays: 0, domain: false }),
   /** Nothing is sent before this instant: every enrollment waits at the start until then. */
-  startAt: z.coerce.date().optional(),
+  startAt: DateTimeIn().optional(),
   /** Minimum minutes between two emails of this sequence from one mailbox (across prospects and steps; clock-aligned windows). */
   minGapMinutes: z.number().int().min(1).max(1440).optional(),
   /** Per-mailbox overrides inside this sequence only: a lower daily limit, or leave the mailbox out of new assignments. Keyed by connection id. */
@@ -159,7 +166,9 @@ export type SequenceSettings = z.infer<typeof SequenceSettings>;
 export type SequenceSettingsInput = z.input<typeof SequenceSettings>;
 
 export const CreateSequenceBody = z.object({ name: z.string().trim().min(1).max(200), settings: SequenceSettings });
-export const UpdateSequenceBody = z.object({ name: z.string().trim().min(1).max(200).optional(), settings: SequenceSettings.optional() });
+/** PATCH settings: only the keys sent change, an omitted key keeps its saved value and `null` resets a key (e.g. detaches `scheduleId`). */
+const SequenceSettingsPatch = z.object(Object.fromEntries(Object.entries(SequenceSettings.shape).map(([k, s]) => [k, ((s instanceof z.ZodDefault ? s.unwrap() : s) as z.ZodType).nullable().optional()]))) as unknown as z.ZodType<{ [K in keyof SequenceSettingsInput]?: SequenceSettingsInput[K] | null }>;
+export const UpdateSequenceBody = z.object({ name: z.string().trim().min(1).max(200).optional(), settings: SequenceSettingsPatch.optional() });
 /** Enroll chosen prospects, or every member of a list (`listId`). */
 export const EnrollProspectsBody = z.object({ profileIds: z.array(Id).max(1000).default([]), listId: Id.optional(), ownerUserId: Id.optional() })
   .refine((b) => b.profileIds.length > 0 || !!b.listId, { message: 'Pass profileIds or listId', path: ['profileIds'] });
@@ -185,7 +194,8 @@ export const ProspectInput = z.object({
   customFields: z.record(z.string().regex(/^[A-Za-z0-9_]{1,64}$/), z.unknown()).default({}),
 });
 export const ImportProspectsBody = z.object({
-  rows: z.array(ProspectInput).min(1).max(5000),
+  /** email is checked per row by the import (bad rows come back in `errors[]`), so one typo does not reject the batch. */
+  rows: z.array(ProspectInput.extend({ email: z.string().max(320) })).min(1).max(5000),
   /** Someone already a prospect: refresh their details (default) or leave them untouched and count the row as skipped. */
   onExisting: z.enum(['update', 'skip']).default('update'),
   ownerRule: z.discriminatedUnion('kind', [
@@ -249,7 +259,7 @@ export const SequencePage = pageResult(SequenceDto);
 export const TaskListQuery = PageQuery.extend({
   assigneeUserId: Id.optional(), status: z.enum(['open', 'done', 'skipped']).optional(),
   bucket: z.enum(['overdue', 'today', 'upcoming']).optional(), kind: TaskKind.optional(),
-  profileId: Id.optional(), unassigned: z.coerce.boolean().optional(), dueBefore: z.coerce.date().optional(), dueAfter: z.coerce.date().optional(), outcome: z.string().max(40).optional(),
+  profileId: Id.optional(), unassigned: z.coerce.boolean().optional(), dueBefore: DateTimeIn().optional(), dueAfter: DateTimeIn().optional(), outcome: z.string().max(40).optional(),
 });
 const TaskFilterField = z.enum(['kind', 'status', 'outcome', 'assigneeUserId', 'profileId', 'dueAt', 'title']);
 const TaskFilterLeaf = z.object({ field: TaskFilterField, op: z.enum(['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'in', 'is_null', 'not_null']), value: z.union([z.string().max(200), z.array(z.string().max(200)).max(50)]).optional() });
@@ -273,15 +283,15 @@ const TaskLinks = {
 };
 export const CreateTaskBody = z.object({
   kind: TaskKind.default('custom'), profileId: Id, title: z.string().trim().min(1).max(200), notes: z.string().max(5000).optional(),
-  assigneeUserId: Id.optional(), dueAt: z.coerce.date().optional(), ...TaskLinks,
+  assigneeUserId: Id.optional(), dueAt: DateTimeIn().optional(), ...TaskLinks,
 });
-export const UpdateTaskBody = z.object({ title: z.string().trim().min(1).max(200).optional(), notes: z.string().max(5000).nullable().optional(), dueAt: z.coerce.date().optional(), kind: TaskKind.optional(), ...TaskLinks });
+export const UpdateTaskBody = z.object({ title: z.string().trim().min(1).max(200).optional(), notes: z.string().max(5000).nullable().optional(), dueAt: DateTimeIn().optional(), kind: TaskKind.optional(), ...TaskLinks });
 /** Bulk edit of open tasks: assign, snooze (new due time) or complete / skip. */
 export const BulkTaskBody = z.object({
   ids: z.array(Id).min(1).max(200),
   action: z.discriminatedUnion('op', [
     z.object({ op: z.literal('assign'), assigneeUserId: Id.nullable() }),
-    z.object({ op: z.literal('snooze'), until: z.coerce.date() }),
+    z.object({ op: z.literal('snooze'), until: DateTimeIn() }),
     z.object({ op: z.literal('complete'), outcome: z.string().trim().min(1).max(40).optional() }),
     z.object({ op: z.literal('skip') }),
   ]),
@@ -294,7 +304,7 @@ export const CompleteTaskBody = z.object({
   /** Call detail (call tasks). */
   durationSec: z.number().int().min(0).max(86_400).optional(), recordingUrl: z.url().max(1000).optional(), externalId: z.string().max(200).optional(),
 });
-export const SnoozeBody = z.object({ until: z.coerce.date() });
+export const SnoozeBody = z.object({ until: DateTimeIn() });
 export const TaskDto = z.object({
   id: Id,
   kind: TaskKind,
@@ -333,7 +343,7 @@ export const OverrideBody = z.object({ category: ReplyCategory });
 export const LabelsBody = z.object({ labels: z.array(z.string().trim().min(1).max(40)).max(20) });
 export const InboxAssignBody = z.object({ assigneeUserId: Id.nullable() });
 export const InboxReplyBody = z.object({ text: z.string().trim().min(1).max(20_000), subject: z.string().max(300).optional(), /** Send from this mailbox instead of the one that got the reply. */ connectionId: Id.optional(),
-  /** Hold the reply and send it at this time (it appears in the scheduled view until then). */ scheduledFor: z.coerce.date().optional() });
+  /** Hold the reply and send it at this time (it appears in the scheduled view until then). */ scheduledFor: DateTimeIn().optional() });
 export const ReferralBody = z.object({ enrollSequenceId: Id.optional() });
 export const ReplyMetaDto = z.object({
   category: ReplyCategory,
@@ -386,7 +396,7 @@ export const ClassifierAccuracyRow = z.object({ source: z.string(), total: z.num
 export const ReferralResult = z.object({ profileId: Id, enroll: EnrollProspectsResult.nullable() });
 
 // ---- meetings & analytics -------------------------------------------------------------------------------------
-export const MeetingBody = z.object({ profileId: Id, at: z.coerce.date().optional(), ref: z.string().max(300).optional() });
+export const MeetingBody = z.object({ profileId: Id, at: DateTimeIn().optional(), ref: z.string().max(300).optional() });
 export const MeetingDto = z.object({ id: Id, profileId: Id, source: z.enum(['calendar_link', 'reply_detected', 'manual']), at: Timestamp, ref: z.string().nullable(), sequenceId: Id.nullable(), createdAt: Timestamp, completedAt: Timestamp.nullable().optional(), outcome: z.string().nullable().optional() });
 export const OutboundStatsQuery = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(), sequenceId: Id.optional(), group: z.enum(['sequence', 'step', 'mailbox']).default('sequence') });
 export const OutboundStatsRow = z.object({
@@ -423,7 +433,10 @@ export const MailboxHealthDto = z.object({
   timezone: z.string().nullable(),
   sendingWindow: MailboxSettingsBody.shape.sendingWindow.unwrap().unwrap().nullable(),
   pacing: z.object({ minGapSec: z.number().int(), jitterSec: z.number().int() }).nullable(),
+  /** Campaign plus warmup sends today (the mailbox's own day): one daily cap covers both. */
   sentToday: z.number().int(),
+  /** The warmup share of `sentToday`. */
+  warmupToday: z.number().int().optional(),
   bounceRate7d: z.number(),
   replyRate7d: z.number(),
   totals: z.object({ sent: z.number().int(), bounced: z.number().int(), complaints: z.number().int(), replied: z.number().int() }),
