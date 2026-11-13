@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, PageQuery, Timestamp, TimestampIn, pageResult } from './common.ts';
+import { AppSlug, Id, PageQuery, Timestamp, TimestampIn, pageResult } from './common.ts';
 import { EventRecord } from './events.ts';
 
 // ---- property conditions (shared by filters and custom metrics) --------------------------------------------------------
@@ -27,6 +27,8 @@ export const EventExplorerQuery = PageQuery.extend({
   /** Only events from messages of this journey, or of this broadcast (campaign). */
   journeyId: Id.optional(),
   broadcastId: Id.optional(),
+  /** Only events sent with this `app` (product). */
+  app: AppSlug.optional(),
 });
 export const EventExplorerPage = pageResult(EventRecord);
 /** Matching events as CSV text (first 50,000). */
@@ -61,11 +63,15 @@ export const MetricAggregateQuery = z.object({
   by: z.string().min(1).max(128).optional(),
   from: TimestampIn,
   to: TimestampIn,
-  timezone: z.string().min(1).max(64).default('UTC'),
+  /** IANA zone the buckets follow; defaults to the workspace's zone. */
+  timezone: z.string().min(1).max(64).optional(),
   filter: z.array(PropertyCondition).max(10).default([]),
   /** Largest number of breakdown values returned (the rest are dropped). */
   topN: z.number().int().min(1).max(25).default(10),
+  /** Only events sent with this `app` (product). */
+  app: AppSlug.optional(),
 });
+export const MetricListQuery = z.object({ app: AppSlug.optional() });
 export type MetricAggregateQuery = z.input<typeof MetricAggregateQuery>;
 export const MetricAggregateResult = z.object({
   metric: z.string(), measurement: z.string(), interval: z.string(), timezone: z.string(), by: z.string().nullable(),

@@ -114,13 +114,17 @@ export const FrequencySettingsBody = z.object({
   scopeId: Id.nullish(),
   caps: z.array(FrequencyCapInput).max(20).default([]),
   smartSending: SmartSending.nullish(),
-  /** Workspace only, off by default: one cap over prospecting + marketing sends to the same person on a channel together. Omitted = keep the saved value; null = off. */
-  crossPurpose: z.object({ max: z.number().int().min(1).max(1000), windowHours: z.number().int().min(1).max(24 * 30) }).nullish(),
+  /**
+   * One cap over prospecting + marketing sends to the same person on a channel together (workspace: off by default). Omitted = keep the saved value.
+   * Workspace row: null or `off` = off. Campaign/workflow override: null = follow the workspace, `off` = no cross-purpose cap for it, a cap = its own.
+   */
+  crossPurpose: z.union([z.object({ max: z.number().int().min(1).max(1000), windowHours: z.number().int().min(1).max(24 * 30) }), z.literal('off')]).nullish(),
 });
 export const FrequencySettingsDto = Row;
 export const FrequencySettingsList = z.object({ items: z.array(FrequencySettingsDto) });
 
-export const SendTimeRecommendation = z.object({ profileId: Id, hour: z.number().int().min(0).max(23), source: z.enum(['profile', 'workspace', 'default']), at: Timestamp });
+/** `hour` is local to `timezone`: the profile's own zone, else the workspace's. */
+export const SendTimeRecommendation = z.object({ profileId: Id, hour: z.number().int().min(0).max(23), source: z.enum(['profile', 'workspace', 'default']), timezone: z.string().optional(), at: Timestamp });
 /** `new_subscribers`: people in the audience now who were not sent the original; `non_purchasers`: recipients with no attributed order. */
 export const ResendBody = z.object({
   to: z.enum(['non_openers', 'non_clickers', 'new_subscribers', 'non_purchasers']),

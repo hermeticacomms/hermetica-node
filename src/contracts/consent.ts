@@ -36,7 +36,7 @@ export const ConsentInputBody = z.object({
   disclosureVersion: z.string().max(64).nullish(),
   ip: z.string().max(64).nullish(),
   userAgent: z.string().max(512).nullish(),
-  proof: z.record(z.string(), z.unknown()).nullish(),
+  proof: z.record(z.string(), z.unknown()).nullish().describe('From an API key, a proof source needs evidence: form → formSubmissionId; double_opt_in / sms_keyword → consentRecordId of that flow'),
   expiresAt: DateTimeIn().nullish(),
   revocationScope: RevocationScope.nullish(),
 });
@@ -170,6 +170,8 @@ export const EligibilityRequest = z.object({
   topicId: Id.optional(),
   destination: z.string().min(1).max(320),
   recipientCountry: z.string().length(2).optional(),
+  /** Outbound sequence the send belongs to: a legitimate-interest assessment scoped to it may lift a jurisdiction block. */
+  sequenceId: Id.optional(),
 });
 export type EligibilityRequest = z.infer<typeof EligibilityRequest>;
 /** `liaId`: the legitimate-interest assessment that lifted this prospecting send's jurisdiction block. */
@@ -194,9 +196,21 @@ export const LiaInput = z.object({
   balancingTest: z.string().trim().min(10).max(8000),
   optOutWording: z.string().trim().min(5).max(1000),
   countries: z.array(z.string().length(2)).min(1).max(40),
+  /** Limit it to these outbound sequences and/or profiles in these segments; both empty = every prospecting path. */
+  sequenceIds: z.array(Id).max(50).optional(), segmentIds: z.array(Id).max(50).optional(),
+  /** When to look at it again (a reminder, not enforced) and when it stops unlocking anything. */
+  reviewAt: DateTimeIn().nullable().optional(), expiresAt: DateTimeIn().nullable().optional(),
+  /** The full assessment document: a file in the content library. */
+  documentAssetId: Id.nullable().optional(),
+});
+/** Scope, dates and document of a recorded assessment; the assessment text itself is evidence and does not change (record a new one). */
+export const LiaPatch = z.object({
+  sequenceIds: z.array(Id).max(50).optional(), segmentIds: z.array(Id).max(50).optional(),
+  reviewAt: DateTimeIn().nullable().optional(), expiresAt: DateTimeIn().nullable().optional(), documentAssetId: Id.nullable().optional(),
 });
 export const LiaDto = z.object({
   id: Id, purpose: z.string(), balancingTest: z.string(), optOutWording: z.string(), countries: z.array(z.string()),
   assessedBy: Id.nullable(), revokedAt: Timestamp.nullable(), createdAt: Timestamp,
+  sequenceIds: z.array(Id), segmentIds: z.array(Id), reviewAt: Timestamp.nullable(), expiresAt: Timestamp.nullable(), documentAssetId: Id.nullable(),
 });
 export const LiaList = z.object({ items: z.array(LiaDto), blockedCountries: z.array(z.string()), unlockableCountries: z.array(z.string()) });

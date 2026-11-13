@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { AppSlug, DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
 import { PostcardDesign } from './postcards.ts';
 
 export const ProspectStatus = z.enum(['new', 'contacted', 'replied', 'interested', 'meeting_booked', 'won', 'lost', 'not_interested', 'bounced', 'unsubscribed', 'do_not_contact']);
@@ -118,7 +118,7 @@ export const SequenceSettings = z.object({
     sticky: z.boolean().default(true),
     /** Sticky mailbox became unavailable: pause the enrollment (default) or move it to another pool member (new thread). */
     onUnavailable: z.enum(['pause', 'reassign']).default('pause'),
-    /** ESP matching (unset = on): a new prospect on Gmail/Google Workspace gets a Google mailbox, on Outlook/M365 a Microsoft one, when such a mailbox has room today. */
+    /** ESP matching (unset = the workspace default, delivery settings `matchRecipientProvider`, on unless turned off): a new prospect on Gmail/Google Workspace gets a Google mailbox, on Outlook/M365 a Microsoft one, when such a mailbox has room today. */
     matchProvider: z.boolean().optional(),
   }).default({ sticky: true, onUnavailable: 'pause' }),
   dailyNewLimit: z.number().int().min(1).max(100_000).optional(),
@@ -212,7 +212,7 @@ export const ImportProspectsResult = z.object({
   profileIds: z.array(Id),
 });
 export const AdoptProspectsBody = z.object({ profileIds: z.array(Id).min(1).max(1000) });
-export const ProspectListQuery = PageQuery.extend({ status: ProspectStatus.optional(), ownerUserId: Id.optional(), domain: z.string().optional() });
+export const ProspectListQuery = PageQuery.extend({ app: AppSlug.optional(), status: ProspectStatus.optional(), ownerUserId: Id.optional(), domain: z.string().optional() });
 export const UpdateProspectBody = z.object({ status: ProspectStatus.optional(), ownerUserId: Id.nullable().optional(), dealValueCents: z.number().int().min(0).max(2_000_000_000).nullable().optional() });
 export const DncImportBody = z.object({ emails: z.array(z.email()).max(10_000).default([]), domains: z.array(z.string().min(3).max(253)).max(1000).default([]) });
 export const DncImportResult = z.object({ suppressed: z.number().int(), domainsBlocked: z.number().int() });
@@ -249,6 +249,7 @@ export const SequenceDto = z.object({
   publishedVersionId: Id.nullable(),
   folder: z.string().nullable(),
   tags: z.array(z.string()),
+  app: z.string().nullable().default(null),
   sequence: SequenceSettings,
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -257,6 +258,7 @@ export const SequencePage = pageResult(SequenceDto);
 
 // ---- tasks ----------------------------------------------------------------------------------------------------
 export const TaskListQuery = PageQuery.extend({
+  app: AppSlug.optional(),
   assigneeUserId: Id.optional(), status: z.enum(['open', 'done', 'skipped']).optional(),
   bucket: z.enum(['overdue', 'today', 'upcoming']).optional(), kind: TaskKind.optional(),
   profileId: Id.optional(), unassigned: z.coerce.boolean().optional(), dueBefore: DateTimeIn().optional(), dueAfter: DateTimeIn().optional(), outcome: z.string().max(40).optional(),
@@ -269,7 +271,7 @@ export const TaskFilterNode: z.ZodType<TaskFilterNode> = z.lazy(() => z.union([
   TaskFilterLeaf,
   z.object({ op: z.enum(['and', 'or']), filters: z.array(TaskFilterNode).min(1).max(20) }),
   z.object({ op: z.literal('not'), filter: TaskFilterNode }),
-]));
+])).meta({ id: 'TaskFilterNode' }); // recursive: one OpenAPI component
 export const TaskSearchBody = z.object({ filter: TaskFilterNode.optional(), limit: z.number().int().min(1).max(200).default(50), cursor: z.string().regex(/^\d{1,6}$/).optional() });
 const TaskLinks = {
   /** Team-defined task type (`/v1/outbound/task-types`). */
@@ -332,6 +334,7 @@ export const TaskPage = pageResult(TaskDto);
 
 // ---- inbox ----------------------------------------------------------------------------------------------------
 export const InboxQuery = PageQuery.extend({
+  app: AppSlug.optional(),
   category: ReplyCategory.optional(), connectionId: Id.optional(), assigneeUserId: Id.optional(), sequenceId: Id.optional(),
   unread: z.coerce.boolean().optional(), label: z.string().max(40).optional(), leadStatus: ProspectStatus.optional(), includeSnoozed: z.coerce.boolean().default(false),
   sourceKind: z.enum(['campaign', 'sequence', 'workflow']).optional(), campaignId: Id.optional(),
@@ -390,6 +393,8 @@ export const ThreadItemDto = z.object({
   connectionId: Id.nullable(),
   stepKey: z.string().nullable(),
   classification: z.string().nullable(),
+  /** Set by the one-inbox profile conversation: email, sms, whatsapp, linkedin, instagram, facebook. */
+  channel: z.string().optional(),
 });
 export const ThreadDto = z.object({ profileId: Id.nullable(), items: z.array(ThreadItemDto) });
 export const ClassifierAccuracyRow = z.object({ source: z.string(), total: z.number().int(), corrected: z.number().int(), accuracy: z.number() });
@@ -398,7 +403,7 @@ export const ReferralResult = z.object({ profileId: Id, enroll: EnrollProspectsR
 // ---- meetings & analytics -------------------------------------------------------------------------------------
 export const MeetingBody = z.object({ profileId: Id, at: DateTimeIn().optional(), ref: z.string().max(300).optional() });
 export const MeetingDto = z.object({ id: Id, profileId: Id, source: z.enum(['calendar_link', 'reply_detected', 'manual']), at: Timestamp, ref: z.string().nullable(), sequenceId: Id.nullable(), createdAt: Timestamp, completedAt: Timestamp.nullable().optional(), outcome: z.string().nullable().optional() });
-export const OutboundStatsQuery = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(), sequenceId: Id.optional(), group: z.enum(['sequence', 'step', 'mailbox']).default('sequence') });
+export const OutboundStatsQuery = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional(), sequenceId: Id.optional(), app: z.string().max(63).optional(), group: z.enum(['sequence', 'step', 'mailbox']).default('sequence') });
 export const OutboundStatsRow = z.object({
   key: z.string(), sent: z.number().int(), bounced: z.number().int(), replied: z.number().int(), positive: z.number().int(), negative: z.number().int(),
   optOuts: z.number().int(), meetings: z.number().int(), positiveRate: z.number(), replyRate: z.number(), bounceRate: z.number(),
@@ -425,6 +430,7 @@ export const MailboxDay = z.object({ day: z.string(), sent: z.number().int(), bo
 export const MailboxHealthDto = z.object({
   connectionId: Id,
   name: z.string(),
+  app: z.string().nullable(),
   status: z.string(),
   health: z.string(),
   dailyCap: z.number().int().nullable(),
@@ -452,3 +458,7 @@ export type EnrollProspectsResult = z.infer<typeof EnrollProspectsResult>;
 export type OutboundStatsRow = z.infer<typeof OutboundStatsRow>;
 export type CreateTaskBody = z.infer<typeof CreateTaskBody>;
 export type MailboxSettingsBody = z.infer<typeof MailboxSettingsBody>;
+
+/** Inbox "Send opt-in ask": the list defaults to the reply's sequence opt-in ask. */
+export const OptInAskBody = z.object({ listId: Id.optional() });
+export const OptInAskResultDto = z.object({ result: z.enum(['sent', 'no_email', 'no_mailbox', 'no_list', 'already_subscribed', 'opted_out', 'suppressed', 'pending']) });

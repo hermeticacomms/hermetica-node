@@ -71,11 +71,15 @@ export const SendRequest = z.object({
   replyToStep: z.string().max(128).optional(),
   /** Transactional threading: reply to this earlier message job of the same profile. */
   inReplyToJobId: Id.optional(),
+  /** Answer a received email (inbound message id) of the same profile in its thread: In-Reply-To / References its Message-ID, from the mailbox it came in on. */
+  inReplyToInboundId: Id.optional(),
   /** Outreach email without an HTML part or open pixel; `unsubscribeText` words the footer unsubscribe link. */
   plainText: z.boolean().optional(),
   unsubscribeText: z.string().max(120).optional(),
   /** `{a|b}` wording: `random` per send (default) or `sequential` (rotate evenly across the sends of a source step). */
   spintaxMode: z.enum(['random', 'sequential']).optional(),
+  /** ESP matching for this send's rotated route: a sequence's own choice; unset = the workspace's `matchRecipientProvider`. */
+  matchProvider: z.boolean().optional(),
   /** Experiment/A-B variant this send belongs to; stamped on the job so rollups group by variant. */
   variantKey: z.string().max(32).optional(),
   /** Transactional envelope (B1/B2): searchable tags and metadata, stored attachments, X- headers, verified from/reply-to override. */
@@ -180,6 +184,8 @@ export const MessageListQuery = PageQuery.extend({
   vars: z.string().max(500).optional(),
   /** Only messages that have at least one event of this kind (open, click, delivered, hard_bounce, ...). */
   eventKind: z.string().max(40).optional(),
+  /** Only messages of this app: an `app:<slug>` tag or `metadata.app`. A key bound to an app always gets its own. */
+  app: z.string().max(63).optional(),
 });
 
 /** One policy stage of the send pipeline (destination, eligibility, caps, route, render, reserve, send, events). */

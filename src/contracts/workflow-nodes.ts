@@ -346,6 +346,11 @@ export const WorkflowNode = z.discriminatedUnion('type', [
     componentKey: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), fields: z.record(z.string(), z.string().max(2000)).default({}),
     events: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(10), timeout: Duration.default({ amount: 7, unit: 'days' }),
   })),
+  /**
+   * Instagram / Facebook DM into the conversation the contact started (no account = their latest one). Meta allows it only within 24 hours of
+   * their last message; outside it, or after they sent STOP, the step is skipped and the journey moves on. Text is liquid.
+   */
+  node('send_social_dm', z.object({ accountId: refId('social_account').optional(), text: z.string().min(1).max(1000) })),
   /** Add the contact to, or remove them from, an ad platform custom audience. Contacts who opted out of ads are never added. */
   node('ad_audience', z.object({ adAccountId: refId('ad_account'), audienceId: z.string().min(1).max(200), op: z.enum(['add', 'remove']).default('add') })),
 ]);

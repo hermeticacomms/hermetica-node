@@ -315,7 +315,8 @@ export interface SegmentGroupInput {
 }
 export type SegmentNodeInput = SegmentGroupInput | z.input<typeof SegmentCondition>;
 
-const SegmentNodeSchema: z.ZodType<SegmentNode, SegmentNodeInput> = z.lazy(() => z.union([SegmentGroupSchema, SegmentCondition]));
+// Recursive schemas carry an `id`: each becomes one OpenAPI component instead of a dangling `$ref`.
+const SegmentNodeSchema: z.ZodType<SegmentNode, SegmentNodeInput> = z.lazy(() => z.union([SegmentGroupSchema, SegmentCondition])).meta({ id: 'SegmentNode' });
 const SegmentGroupSchema: z.ZodType<SegmentGroup, SegmentGroupInput> = z.lazy(() =>
   z.object({ type: z.literal('group'), op: z.enum(['and', 'or']), negate: z.boolean().optional(), children: z.array(SegmentNodeSchema).max(MAX_SEGMENT_CONDITIONS) }),
 );
@@ -351,6 +352,7 @@ export const SegmentDto = z.object({
   /** `profile`, or the custom object type key the segment selects (an object segment). */
   subject: z.string(),
   starred: z.boolean(),
+  app: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -361,6 +363,8 @@ export const SegmentSubject = z.string().regex(/^(profile|[a-z][a-z0-9_]{0,62})$
 export const CreateSegmentBody = z.object({
   name: z.string().trim().min(1).max(200), description: z.string().max(2000).nullish(), folder: z.string().trim().min(1).max(80).nullish(), definition: SegmentDefinition,
   tags: z.array(z.string().trim().min(1).max(64)).max(50).optional(), subject: SegmentSubject.optional(), starred: z.boolean().optional(),
+  /** Product that owns the segment (null = shared), a label and filter only. */
+  app: AppSlug.nullish(),
 });
 export const UpdateSegmentBody = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -369,6 +373,7 @@ export const UpdateSegmentBody = z.object({
   definition: SegmentDefinition.optional(),
   status: z.enum(['active', 'archived']).optional(),
   starred: z.boolean().optional(),
+  app: AppSlug.nullish(),
   tags: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
 });
 export const SegmentPreviewBody = z.object({ definition: SegmentDefinition, subject: SegmentSubject.optional() });
@@ -393,7 +398,7 @@ export const MembersQuery = PageQuery.extend({
 export const SegmentListQuery = PageQuery.extend({
   q: z.string().max(200).optional(), ids: Csv(100).optional(),
   createdFrom: Timestamp.optional(), createdTo: Timestamp.optional(), updatedFrom: Timestamp.optional(), updatedTo: Timestamp.optional(),
-  active: Bool.optional(), starred: Bool.optional(), sort: z.enum(SEGMENT_SORTS).optional(),
+  active: Bool.optional(), starred: Bool.optional(), app: AppSlug.optional(), sort: z.enum(SEGMENT_SORTS).optional(),
 });
 export const EvaluateResult = z.object({ queued: z.literal(true) });
 
@@ -417,7 +422,7 @@ export interface SegmentMatchNode {
 }
 const SegmentMatchNodeSchema: z.ZodType<SegmentMatchNode> = z.lazy(() =>
   z.object({ kind: z.enum(['group', 'condition']), label: z.string(), matched: z.boolean(), op: z.enum(['and', 'or']).optional(), negated: z.boolean().optional(), children: z.array(SegmentMatchNodeSchema).optional() }),
-);
+).meta({ id: 'SegmentMatchNode' });
 export const SegmentExplainMatch = z.object({ segmentId: Id.nullable(), profileId: Id, matched: z.boolean(), member: z.boolean().nullable(), tree: SegmentMatchNodeSchema, evaluatedAt: Timestamp });
 
 // ---- builder helpers: suggestions, export -------------------------------------------------------------------------

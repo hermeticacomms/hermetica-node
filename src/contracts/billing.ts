@@ -34,4 +34,5 @@ export const MyReferralDto = z.object({ enabled: z.boolean(), code: z.string().n
 
 /** Stripe Connect payouts (boost bounties, ad network earnings). `configured` false = no platform Stripe account: everything is settled by hand. */
 export const PayoutAccountDto = z.object({ configured: z.boolean(), started: z.boolean(), payoutsEnabled: z.boolean(), detailsSubmitted: z.boolean() });
-export const PayoutOnboardBody = z.object({ returnUrl: z.url() });
+/** `country` (ISO code) of the writer's payout account, asked before the account exists; another country than the platform's gets Stripe's recipient agreement. */
+export const PayoutOnboardBody = z.object({ returnUrl: z.url(), country: z.string().trim().length(2).toUpperCase().optional() });

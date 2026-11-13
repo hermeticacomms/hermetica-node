@@ -174,8 +174,10 @@ export const SiteSdkSettings = z.object({
 });
 export type SiteSdkSettings = z.infer<typeof SiteSdkSettings>;
 /** GET/PUT /v1/sites/:id/settings: the SDK settings plus the server-side ingest switches of the site. */
-export const SiteSettingsDto = SiteSdkSettings.extend({ botFilter: z.boolean(), trustBrowserRevenue: z.boolean(), identitySecretSet: z.boolean() });
-export const SiteSettingsBody = SiteSdkSettings.extend({ botFilter: z.boolean().default(true), trustBrowserRevenue: z.boolean().default(false) });
+/** `retentionDays`: this site's events are deleted after this many days, null = the workspace's events retention (a site can only be stricter). */
+const SiteRetentionDays = z.number().int().min(30).max(3650).nullable();
+export const SiteSettingsDto = SiteSdkSettings.extend({ botFilter: z.boolean(), trustBrowserRevenue: z.boolean(), identitySecretSet: z.boolean(), retentionDays: SiteRetentionDays });
+export const SiteSettingsBody = SiteSdkSettings.extend({ botFilter: z.boolean().default(true), trustBrowserRevenue: z.boolean().default(false), /** Left out: unchanged. */ retentionDays: SiteRetentionDays.optional() });
 /** GET /ingest/v1/config: what the snippet applies; `consentMode` is already resolved for the visitor's region. */
 export const SdkRemoteConfig = SiteSdkSettings.omit({ regions: true });
 /** The identity secret, shown once; signing identities with it is done on the site's server, never in the browser. */

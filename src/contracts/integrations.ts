@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, PageQuery, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Id, PageQuery, Timestamp, pageResult } from './common.ts';
 
 /** Exact topic (`profile.created`), prefix wildcard (`segment.*`) or everything (`*`). */
 export const WebhookTopicPattern = z.string().regex(/^(\*|[a-z_]+(\.[a-z_]+)*(\.\*)?)$/, 'Use an exact topic, "prefix.*" or "*"').max(100);
@@ -38,7 +38,9 @@ const Delivery = {
   retryWindowHours: z.number().int().min(1).max(72),
 };
 
-export const CreateWebhookEndpoint = z.object({ url: Url, topics: Topics, description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(), autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional() });
+/** A signing secret chosen by the caller (e.g. kept in a config file) instead of a generated one: unguessable, and never returned. */
+export const WebhookSigningSecret = z.string().min(32).max(256).refine((s) => new Set(s).size >= 12, 'Use a random secret: at least 32 characters, at least 12 of them different');
+export const CreateWebhookEndpoint = z.object({ url: Url, topics: Topics, secret: WebhookSigningSecret.optional(), description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(), autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional(), /** Product this endpoint belongs to: it only gets events attributed to that app (or not attributed to any). An app-bound key sets it for you. */ app: AppSlug.nullish() });
 export const UpdateWebhookEndpoint = z.object({
   url: Url.optional(),
   topics: Topics.optional(),
@@ -48,6 +50,7 @@ export const UpdateWebhookEndpoint = z.object({
   autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional(),
   /** Re-enabling resets the failure counter. */
   status: z.enum(['active', 'disabled']).optional(),
+  app: AppSlug.nullable().optional(),
 });
 
 export const WebhookEndpointDto = z.object({
@@ -62,14 +65,23 @@ export const WebhookEndpointDto = z.object({
   bodyTemplate: z.string().nullable(), authHeaders: Delivery.authHeaders, throttleSeconds: z.number().int(), throttleTopics: z.array(z.string()),
   autoDisableAfter: z.number().int().default(50), retryWindowHours: z.number().int().default(24),
   status: z.enum(['active', 'disabled']),
+  app: z.string().nullable().optional(),
   consecutiveFailures: z.number().int(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
-/** `secret` is shown exactly once (create / rotate). */
-export const WebhookEndpointCreated = WebhookEndpointDto.extend({ secret: z.string() });
-export const WebhookSecretResult = z.object({ secret: z.string() });
+/** `secret` is shown exactly once (create / rotate); absent when the caller supplied its own. */
+export const WebhookEndpointCreated = WebhookEndpointDto.extend({ secret: z.string().optional() });
+export const WebhookSecretResult = z.object({
+  secret: z.string(),
+  /** Until then deliveries also carry the old secret's signature (a second `v1=`); null when it stopped at once. */
+  previousSecretExpiresAt: Timestamp.nullable(),
+});
+/** `graceHours`: how long the old secret keeps signing next to the new one (default 24; `0` stops it at once, e.g. after a leak). */
+export const RotateWebhookSecretQuery = z.object({ graceHours: z.coerce.number().int().min(0).max(168).optional() });
 export const WebhookEndpointPage = pageResult(WebhookEndpointDto);
+/** `app` lists one product's endpoints (an app-bound key always gets its own). */
+export const WebhookEndpointQuery = PageQuery.extend({ app: AppSlug.optional() });
 
 export const WebhookDeliveryStatus = z.enum(['pending', 'succeeded', 'failed']);
 export const WebhookDeliveryDto = z.object({

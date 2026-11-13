@@ -82,6 +82,8 @@ export const Trigger = z.discriminatedUnion('type', [
   /** `keyword`: for SMS replies, the first word of the reply (case-insensitive), e.g. STOP-style opt-ins like JOIN. */
   t('reply_received', { classification: pick(z.string(), 'reply_class').optional(), keyword: z.string().max(64).optional() }),
   t('meeting_booked', {}),
+  /** A lead signal (`lead.signal`) for the contact on it or a contact linked to its company. Empty `signalType` = any signal. */
+  t('lead_signal', { signalType: z.enum(['job_change', 'new_hire', 'hiring', 'funding', 'website_visit']).optional() }),
   /** The person's device entered an in-app geofence (the SDK hit is recorded as a `geofence_entered` event, so the app sends nothing custom). Empty `geofenceId` = any geofence. */
   t('geofence_entered', { geofenceId: pick(z.string().max(128), 'geofence').optional() }),
   /** A workspace-registered trigger type (Settings > Custom actions and triggers): fires on its event when every `values` entry equals the event property. */
@@ -167,6 +169,8 @@ export const CreateWorkflowBody = z.object({
   folder: z.string().max(100).nullish(),
   tags: z.array(z.string().max(64)).max(50).default([]),
   definition: WorkflowDefinition.partial().optional(),
+  /** Product (app slug) that owns the journey; an app-bound API key stamps its own. */
+  app: AppSlug.nullish(),
 });
 export const WorkflowColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Use a #rrggbb colour');
 export const UpdateWorkflowBody = z.object({
@@ -175,13 +179,15 @@ export const UpdateWorkflowBody = z.object({
   folder: z.string().max(100).nullish(),
   tags: z.array(z.string().max(64)).max(50).optional(),
   definition: WorkflowDefinition.optional(),
+  /** Move to another product, or null to share. App-bound keys cannot. */
+  app: AppSlug.nullable().optional(),
 });
 /** `started*` is when the first version went live. Sorts other than the default (newest id first) still page by cursor. */
 export const WorkflowListQuery = PageQuery.extend({
   status: WorkflowStatus.optional(), folder: z.string().optional(), mode: WorkflowMode.optional(),
   q: z.string().trim().max(200).optional(), archived: z.enum(['true', 'false']).optional(), triggerType: z.string().max(32).optional(),
   createdFrom: DateTimeIn().optional(), createdTo: DateTimeIn().optional(), updatedFrom: DateTimeIn().optional(), updatedTo: DateTimeIn().optional(),
-  startedFrom: DateTimeIn().optional(), startedTo: DateTimeIn().optional(),
+  startedFrom: DateTimeIn().optional(), startedTo: DateTimeIn().optional(), app: AppSlug.optional(),
   sort: z.enum(['created', '-created', 'updated', '-updated', 'name', '-name']).optional(),
 });
 export type WorkflowListQuery = z.infer<typeof WorkflowListQuery>;
@@ -198,6 +204,7 @@ export const WorkflowDto = z.object({
   folder: z.string().nullable(),
   tags: z.array(z.string()),
   color: z.string().nullable().optional(),
+  app: z.string().nullable().optional(),
   draftGraph: z.unknown(),
   draftTriggers: z.unknown(),
   draftSettings: z.unknown(),
@@ -297,6 +304,8 @@ export const WorkflowTemplateDto = z.object({
   key: z.string(), name: z.string(), description: z.string(), definition: WorkflowDefinition,
   /** Gallery email templates designed for this flow, and the simulator scenario that walks it. */
   templates: z.array(z.string()).default([]), preset: SimPreset.optional(),
+  /** The converting variant of `preset`: awaited events happen and engagement waits are met. */
+  happyPreset: SimPreset.optional(),
   category: z.string().default('lifecycle'),
   /** Events the flow relies on; `missing` lists those this workspace has never received (filled by the API). */
   requires: z.array(z.string()).default([]),
@@ -309,7 +318,7 @@ export const InstallReport = z.object({
 });
 export type InstallReport = z.infer<typeof InstallReport>;
 export const ExportDto = z.object({ name: z.string(), purpose: Purpose, mode: WorkflowMode, definition: WorkflowDefinition });
-export const ImportBody = ExportDto.extend({ name: z.string().trim().min(1).max(200) });
+export const ImportBody = ExportDto.extend({ name: z.string().trim().min(1).max(200), app: AppSlug.nullish() });
 
 /** What happens to enrollments already inside when a new version goes live. */
 export const PublishBody = z.object({

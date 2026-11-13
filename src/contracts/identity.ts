@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Attributes, Channel, DateTimeIn, Id, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Attributes, Channel, DateTimeIn, Id, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { LegalBasis } from './consent.ts';
 
 const str = z.string().max(256).nullable();
@@ -203,9 +203,10 @@ export const ListSettings = z.object({
   defaultPoolId: z.union([z.uuid(), z.literal('')]).optional(),
 });
 export type ListSettings = z.infer<typeof ListSettings>;
-export const CreateListBody = z.object({ name: z.string().min(1).max(200), description: z.string().max(2000).nullable().optional(), settings: ListSettings.optional(), folderId: Id.nullable().optional() });
+/** `app`: product that owns the list (null = shared), a label and filter only. */
+export const CreateListBody = z.object({ name: z.string().min(1).max(200), description: z.string().max(2000).nullable().optional(), settings: ListSettings.optional(), folderId: Id.nullable().optional(), app: AppSlug.nullish() });
 export const UpdateListBody = CreateListBody.partial();
-export const ListDto = z.object({ id: Id, name: z.string(), description: z.string().nullable(), kind: z.string(), settings: ListSettings, tags: z.array(z.string()).optional(), folderId: Id.nullable().optional(), createdAt: Timestamp });
+export const ListDto = z.object({ id: Id, name: z.string(), description: z.string().nullable(), kind: z.string(), settings: ListSettings, tags: z.array(z.string()).optional(), folderId: Id.nullable().optional(), app: z.string().nullable().optional(), createdAt: Timestamp });
 /** Mailchimp-style list stats over the last 365 days of marketing sends (rates are 0..1 of delivered). */
 export const ListStats = z.object({
   sent: z.number().int(), openRate: z.number(), clickRate: z.number(), unsubscribed: z.number().int(), cleaned: z.number().int(), lastSentAt: z.string().nullable(),
@@ -227,7 +228,7 @@ export const ListJoinOrderPage = z.object({ items: z.array(ListMemberMetaDto), n
 // ---- identity settings: match order, duplicate rules, timeline volume ---------------------------------------------
 export const IDENTITY_MATCH_TYPES = ['external_id', 'email', 'phone', 'anonymous_id'] as const;
 export const DUPLICATE_RULES = ['email_alias', 'same_name_city'] as const;
-/** Message rows on the profile timeline: every send status and engagement, engagement only (opens, clicks, replies, unsubscribes), or none. */
+/** Message rows on the profile timeline: every send status and engagement, engagement only (opens, clicks, replies, unsubscribes), or none. Journey step rows are kept only with `all` (entries, exits and goals always). */
 export const TIMELINE_MESSAGE_MODES = ['all', 'engagement', 'off'] as const;
 const distinct = (a: readonly string[]) => new Set(a).size === a.length;
 /** Defaults are the behaviour before these became settings. */

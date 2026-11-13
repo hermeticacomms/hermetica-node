@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, DateTimeIn, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Channel, DateTimeIn, Id, PageQuery, Purpose, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { AbTestConfig } from './experiments.ts';
 import { PushTestTarget } from './push.ts';
 import { MetricCounts, AvailabilityMap } from './analytics.ts';
@@ -120,6 +120,8 @@ export const CreateCampaignBody = z.object({
   reviewDeadline: ReviewDeadline.nullish(),
   /** Smart audience: at send time, leave out people predicted to unsubscribe or complain (past complaint, or long unengaged). */
   smartAudience: z.boolean().optional(),
+  /** Product (app slug) that owns the campaign; an app-bound API key stamps its own. Its messages carry `app:<slug>`, so webhook endpoints of other apps skip their events. */
+  app: AppSlug.nullish(),
 });
 export type CreateCampaignBody = z.input<typeof CreateCampaignBody>;
 
@@ -143,6 +145,8 @@ export const UpdateCampaignBody = z.object({
   reviewDrafts: z.boolean().optional(),
   reviewDeadline: ReviewDeadline.nullish(),
   smartAudience: z.boolean().optional(),
+  /** Move the campaign to another product (app slug), or null to share it. App-bound keys cannot. */
+  app: AppSlug.nullable().optional(),
 });
 
 /** Planning details, editable at any status. Dates are calendar days; the campaign's real send time is its schedule. */
@@ -203,6 +207,7 @@ export const CampaignDto = z.object({
   /** Why fan-out failed (status `failed`). */
   failureReason: z.string().nullish(),
   smartAudience: z.boolean().optional(),
+  app: z.string().nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -211,11 +216,13 @@ export type CampaignDto = z.infer<typeof CampaignDto>;
 export const CampaignPage = pageResult(CampaignDto);
 /** Shared by the list and search routes. `q` matches name, message subject and message content. */
 export const CampaignListQuery = PageQuery.extend({
-  status: CampaignStatus.optional(),
+  /** One status or a comma-separated list (`failed,paused,sending`). */
+  status: z.string().max(120).refine((s) => s.split(',').every((x) => CampaignStatus.safeParse(x).success), { message: `Each status must be one of ${CampaignStatus.options.join(', ')}` }).optional(),
   q: z.string().max(200).optional(),
   channel: Channel.optional(),
   purpose: Purpose.optional(),
   folderId: Id.optional(),
+  app: AppSlug.optional(),
   tag: z.string().max(80).optional(),
   listId: Id.optional(),
   /** Created-at range. */

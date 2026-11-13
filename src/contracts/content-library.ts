@@ -16,7 +16,7 @@ export const ContentSettingsDto = z.object({ approvalRequired: z.boolean(), camp
 export const ContentSettingsPatch = z.object({ approvalRequired: z.boolean(), campaignApprovalRequired: z.boolean(), transactionalPromo: z.enum(['warn', 'block']), uploadTypes: z.array(UploadTypeGroup).max(7), defaultAssetAccess: AssetAccess }).partial();
 
 export const AssetDto = z.object({
-  id: Id, filename: z.string(), contentType: z.string(), bytes: z.number(), width: z.number(), height: z.number(), url: z.string(), thumbUrl: z.string().nullable().default(null), altText: z.string().nullable(), folderId: Id.nullable(), language: z.string().nullable(), tags: z.array(z.string()).default([]), scanStatus: z.enum(['unscanned', 'clean', 'quarantined']).default('unscanned'), access: AssetAccess.default('public_indexable'), createdAt: Timestamp,
+  id: Id, filename: z.string(), contentType: z.string(), bytes: z.number(), width: z.number(), height: z.number(), url: z.string(), thumbUrl: z.string().nullable().default(null), altText: z.string().nullable(), folderId: Id.nullable(), language: z.string().nullable(), tags: z.array(z.string()).default([]), scanStatus: z.enum(['unscanned', 'clean', 'quarantined', 'pending', 'infected', 'error']).default('unscanned'), access: AssetAccess.default('public_indexable'), createdAt: Timestamp,
 });
 export const FolderDto = z.object({ id: Id, kind: z.enum(['template', 'asset']), name: z.string(), parentId: Id.nullable(), itemCount: z.number(), createdAt: Timestamp });
 export const FolderInput = z.object({ name: z.string().trim().min(1).max(200), parentId: Id.nullable().optional() });
@@ -34,6 +34,8 @@ export const TrackingDomainDto = z.object({
   lastCheckedAt: Timestamp.nullable(), lastError: z.string().nullable(), createdAt: Timestamp,
   /** HTTPS certificate on the host. Links use https only once `issued`; until then they go out over http. */
   certStatus: z.enum(['pending', 'issued', 'failed']), certCheckedAt: Timestamp.nullable(), certError: z.string().nullable(),
+  /** Expiry of the certificate the last successful probe saw (the proxy renews it automatically). */
+  certExpiresAt: Timestamp.nullable().optional(),
 });
 export const TrackingDomainPage = pageResult(TrackingDomainDto);
 

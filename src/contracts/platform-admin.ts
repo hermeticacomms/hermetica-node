@@ -67,6 +67,13 @@ export const OAuthTokenBody = z.object({
 export const OAuthTokenResult = z.object({
   access_token: z.string(), token_type: z.literal('Bearer'), expires_in: z.number().int(), refresh_token: z.string(), scope: z.string(),
 });
+/** RFC 8414 authorization server metadata (`/.well-known/oauth-authorization-server`). */
+export const OAuthServerMetadata = z.object({
+  issuer: z.string(), authorization_endpoint: z.string(), token_endpoint: z.string(), revocation_endpoint: z.string(),
+  scopes_supported: z.array(z.string()), response_types_supported: z.array(z.string()), grant_types_supported: z.array(z.string()),
+  code_challenge_methods_supported: z.array(z.string()), token_endpoint_auth_methods_supported: z.array(z.string()),
+  revocation_endpoint_auth_methods_supported: z.array(z.string()), service_documentation: z.string(),
+});
 export const OAuthRevokeBody = z.object({ token: z.string().min(1).max(200), client_id: z.string().min(1).max(100), client_secret: z.string().max(200).optional() });
 export const AuthorizedAppDto = z.object({
   clientId: z.string(), name: z.string(), scopes: z.array(z.string()), grantedBy: Id, grantedAt: Timestamp, lastUsedAt: Timestamp.nullable(),

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Id, Timestamp, TimestampIn } from './common.ts';
+import { AppSlug, Id, Timestamp, TimestampIn } from './common.ts';
 
 export const Role = z.enum(['owner', 'admin', 'marketer', 'sales', 'analyst', 'viewer']);
 export const ApiKeyKind = z.enum(['secret', 'site']);
@@ -15,6 +15,7 @@ export const WorkspaceDto = z.object({
   organizationId: Id,
   name: z.string(),
   timezone: z.string(),
+  defaultSendHour: z.number().int().nullable().optional(),
   locale: z.string(),
   postalAddress: z.string().nullable(),
   adminEmail: z.string().nullable(),
@@ -34,13 +35,18 @@ export const Currency = z.string().regex(/^[A-Z]{3}$/, 'Use a 3-letter currency 
 export const WorkspacePatch = z.object({
   name: z.string().min(1).max(120).optional(),
   timezone: z.string().max(64).optional(),
+  /** Local hour (0-23) optimized sends use when there is too little engagement data; null = 10. */
+  defaultSendHour: z.number().int().min(0).max(23).nullable().optional(),
   locale: z.string().min(2).max(16).optional(),
   postalAddress: z.string().max(500).nullable().optional(),
   adminEmail: z.email().nullable().optional(),
   unsubscribeRedirectUrl: z.url({ protocol: /^https$/ }).nullable().optional(),
   quietHours: z.object({ start: Hhmm, end: Hhmm }).optional(),
-  /** Replaces `quietHours` for one channel; omit a channel to use the workspace hours. SMS uses its own sending hours. */
-  quietHoursByChannel: z.partialRecord(z.enum(['email', 'whatsapp', 'push']), z.object({ start: Hhmm, end: Hhmm })).optional(),
+  /**
+   * Replaces `quietHours` for one channel (`email`), or for one channel's recipients in one country (`email:DE`, ISO code; wins over the
+   * channel's own). Omit a key to fall back. SMS uses its own sending hours and country rules.
+   */
+  quietHoursByChannel: z.record(z.string().regex(/^(email|whatsapp|push)(:[A-Z]{2})?$/, 'Use email, whatsapp or push, optionally with a country: email:DE'), z.object({ start: Hhmm, end: Hhmm })).optional(),
   apiKeyExpiryDays: z.number().int().min(1).max(730).nullable().optional(),
   displayCurrency: Currency.optional(),
   fxRates: z.record(Currency, z.number().positive().max(1_000_000)).optional(),
@@ -55,7 +61,7 @@ export const DevLoginBody = z.object({ email: z.email().max(254), name: z.string
 export const AuthResult = z.object({ user: UserDto, workspace: WorkspaceDto.nullable(), expiresAt: Timestamp.nullable() });
 export const LogoutResult = z.object({ ok: z.literal(true), /** Atlas end-session URL the browser should visit next (null without Atlas). */ redirectTo: z.string().nullable() });
 export const MeResult = z.object({
-  actor: z.object({ type: z.string(), id: z.string(), workspaceId: Id, role: Role.optional(), scopes: z.array(z.string()) }),
+  actor: z.object({ type: z.string(), id: z.string(), workspaceId: Id, role: Role.optional(), scopes: z.array(z.string()), /** API key bound to one product: it only sees that app's topics, lists, segments, fields and webhooks. */ app: z.string().nullable().optional() }),
   user: UserDto.nullable(),
   workspaces: z.array(z.object({ id: Id, name: z.string(), role: Role })),
   /** Set while an owner is viewing the app as this user. */
@@ -77,11 +83,13 @@ export const ApiKeyCreate = z.object({
   allowedSequenceIds: z.array(z.uuid()).max(50).optional(),
   /** Optional cap on requests per minute for this key; over it the API answers 429. */
   rateLimitPerMin: z.number().int().min(1).max(100_000).optional(),
+  /** Secret keys: bind the key to one product (app slug) that shares this workspace. It then sees and creates only that app's topics, lists, segments, fields and webhook endpoints. */
+  app: AppSlug.nullish(),
   /** Optional expiry; after it the key answers 401 like a revoked one. */
   expiresAt: TimestampIn.optional(),
 });
 /** Change a live key's own rate budget; null drops it back to the default limit. */
-export const ApiKeyUpdate = z.object({ rateLimitPerMin: z.number().int().min(1).max(100_000).nullable() });
+export const ApiKeyUpdate = z.object({ rateLimitPerMin: z.number().int().min(1).max(100_000).nullable().optional(), /** Bind to an app slug, or null to unbind (secret keys only). */ app: AppSlug.nullable().optional() });
 export const ApiKeyDto = z.object({
   id: Id,
   name: z.string(),
@@ -93,6 +101,7 @@ export const ApiKeyDto = z.object({
   allowedConnectionIds: z.array(z.string()).optional(),
   allowedSequenceIds: z.array(z.string()).optional(),
   rateLimitPerMin: z.number().int().nullable().optional(),
+  app: z.string().nullable().optional(),
   lastUsedAt: Timestamp.nullable(),
   revokedAt: Timestamp.nullable(),
   expiresAt: Timestamp.nullable().optional(),

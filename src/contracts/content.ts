@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, Id, Purpose, PageQuery, ReplyToList, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Channel, Id, Purpose, PageQuery, ReplyToList, Timestamp, pageResult } from './common.ts';
 import { Block, BlockDoc } from './content-blocks.ts';
 import { LintResult } from './content-library.ts';
 import { RcsContent } from './rcs.ts';
@@ -48,7 +48,7 @@ export const TemplateVersionDto = z.object({
 
 export const TemplateDto = z.object({
   id: Id, workspaceId: Id, channel: Channel, name: z.string(), kind: TemplateKind, folder: z.string().nullable(), tags: z.array(z.string()),
-  currentVersionId: Id.nullable(), archived: z.boolean(), folderId: Id.nullable(), brandKitId: Id.nullable(), isDefault: z.boolean().default(false), topicId: Id.nullable().default(null), createdBy: z.string().nullable().default(null), createdAt: Timestamp, updatedAt: Timestamp,
+  currentVersionId: Id.nullable(), archived: z.boolean(), folderId: Id.nullable(), brandKitId: Id.nullable(), isDefault: z.boolean().default(false), topicId: Id.nullable().default(null), createdBy: z.string().nullable().default(null), app: z.string().nullable().default(null), createdAt: Timestamp, updatedAt: Timestamp,
 });
 export const TemplateWithVersion = TemplateDto.extend({ currentVersion: TemplateVersionDto.nullable() });
 
@@ -63,6 +63,7 @@ export const CreateTemplateBody = z.object({
   tags: z.array(z.string().max(64)).max(50).default([]),
   /** Preference topic for this template's marketing sends that name no topic (as on PATCH). */
   topicId: Id.nullable().optional(),
+  app: AppSlug.nullish().describe('Product (app slug) that owns the template; an app-bound API key stamps its own and only sees its own'),
   version: TemplateVersionInput.optional(),
 });
 export const UpdateTemplateBody = z.object({
@@ -77,13 +78,14 @@ export const UpdateTemplateBody = z.object({
   topicId: Id.nullable().optional(),
   /** The pre-selected template for new campaigns on this channel; setting it clears the previous default. */
   isDefault: z.boolean().optional(),
+  app: AppSlug.nullable().optional().describe('Move to another product (app slug), or null to share; app-bound keys cannot'),
 });
 export const ListTemplatesQuery = PageQuery.extend({
   channel: Channel.optional(), folder: z.string().optional(), folderId: Id.optional(), tag: z.string().max(64).optional(), q: z.string().max(200).optional(),
   archived: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
   /** Actor id of the creator (a user id, or `me` for the caller). */
   createdBy: z.string().max(128).optional(),
-  kind: TemplateKind.optional(),
+  kind: TemplateKind.optional(), app: AppSlug.optional(),
   createdAfter: Timestamp.optional(), createdBefore: Timestamp.optional(),
   sort: z.enum(['newest', 'oldest', 'name', 'name_desc', 'updated']).default('newest'),
 });
