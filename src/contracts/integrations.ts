@@ -40,7 +40,17 @@ const Delivery = {
 
 /** A signing secret chosen by the caller (e.g. kept in a config file) instead of a generated one: unguessable, and never returned. */
 export const WebhookSigningSecret = z.string().min(32).max(256).refine((s) => new Set(s).size >= 12, 'Use a random secret: at least 32 characters, at least 12 of them different');
-export const CreateWebhookEndpoint = z.object({ url: Url, topics: Topics, secret: WebhookSigningSecret.optional(), description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(), autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional(), /** Product this endpoint belongs to: it only gets events attributed to that app (or not attributed to any). An app-bound key sets it for you. */ app: AppSlug.nullish() });
+/** Watchtower's PagerDuty-compatible alert intake (hosted; a self-hosted Watchtower serves the same path on its edge). */
+export const WATCHTOWER_ENQUEUE_URL = 'https://edge.watchtowerops.net/v2/enqueue';
+/** What a Watchtower endpoint is subscribed to unless you pick other topics: connection health (incl. pauses) and sending-domain verification. */
+export const WATCHTOWER_TOPICS = ['connection.health_changed', 'domain.verification_failed', 'domain.verified'];
+/**
+ * A target preset. `watchtower`: each delivery is a Watchtower alert event (trigger on trouble, resolve on recovery) authenticated with the
+ * project's ingest key (scope `ingest:alerts`), which is kept sealed in place of a signing secret and never returned.
+ */
+export const WebhookPresetInput = z.object({ kind: z.literal('watchtower'), ingestKey: z.string().trim().min(8).max(256), environment: z.string().trim().min(1).max(64) });
+export const WebhookPreset = WebhookPresetInput.omit({ ingestKey: true });
+export const CreateWebhookEndpoint = z.object({ preset: WebhookPresetInput.optional(), url: Url, topics: Topics, secret: WebhookSigningSecret.optional(), description: z.string().max(500).optional(), filters: Scope.filters.optional(), listIds: Scope.listIds.optional(), sources: Scope.sources.optional(), sequenceIds: Scope.sequenceIds.optional(), bodyTemplate: Delivery.bodyTemplate.optional(), authHeaders: Delivery.authHeaders.optional(), throttleSeconds: Delivery.throttleSeconds.optional(), throttleTopics: Delivery.throttleTopics.optional(), autoDisableAfter: Delivery.autoDisableAfter.optional(), retryWindowHours: Delivery.retryWindowHours.optional(), /** Product this endpoint belongs to: it only gets events attributed to that app (or not attributed to any). An app-bound key sets it for you. */ app: AppSlug.nullish() });
 export const UpdateWebhookEndpoint = z.object({
   url: Url.optional(),
   topics: Topics.optional(),
@@ -66,6 +76,7 @@ export const WebhookEndpointDto = z.object({
   autoDisableAfter: z.number().int().default(50), retryWindowHours: z.number().int().default(24),
   status: z.enum(['active', 'disabled']),
   app: z.string().nullable().optional(),
+  preset: WebhookPreset.nullable().optional(),
   consecutiveFailures: z.number().int(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -139,3 +150,8 @@ export const IntegrationSecretList = z.object({ items: z.array(IntegrationSecret
 
 /** Async journal export job: same filters as the journal read; poll the job, then download the CSV. */
 export const WebhookJournalExportBody = z.object({ after: z.number().int().min(0).optional(), endpointId: Id.optional(), topic: WebhookTopicPattern.optional() });
+
+/** `hermetica webhooks listen`: a short-lived session that streams the workspace's events so a local receiver can be tested. */
+export const CreateWebhookListen = z.object({ topics: Topics.default(['*']) });
+/** `secret` signs the forwarded events (same `Hermetica-Signature` format as real deliveries); shown once, never stored. */
+export const WebhookListenSession = z.object({ id: Id, topics: z.array(z.string()), secret: z.string(), expiresAt: Timestamp });
