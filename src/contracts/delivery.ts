@@ -20,8 +20,8 @@ export const ALLOWED_PLAIN_HEADERS = ['list-id', 'list-help', 'list-owner', 'lis
 const headerAllowed = (k: string) => (/^X-[\w-]{1,100}$/i.test(k) && !/^x-(hermetica|sg|mailgun|ses|pm)-/i.test(k)) || (ALLOWED_PLAIN_HEADERS as readonly string[]).includes(k.toLowerCase());
 export const CustomHeaders = z.record(z.string().refine(headerAllowed, 'custom headers must start with X- (not a provider/internal prefix) or be one of: ' + ALLOWED_PLAIN_HEADERS.join(', ')), z.string().max(998).regex(/^[^\r\n]*$/)).refine((m) => Object.keys(m).length <= 20);
 
-/** How merge tags in the content are written: Liquid `{{ vars.x }}` (default), Mailchimp `*|X|*`, or Handlebars-style `{{x}}` (vars at the top level). */
-export const MergeLanguage = z.enum(['liquid', 'mailchimp', 'handlebars']);
+/** How merge tags in the content are written: Liquid `{{ vars.x }}` (default), Mailchimp `*|X|*`, Handlebars-style `{{x}}` (vars at the top level), or `none` (no rendering: sent as written). */
+export const MergeLanguage = z.enum(['liquid', 'mailchimp', 'handlebars', 'none']);
 export type MergeLanguage = z.infer<typeof MergeLanguage>;
 /** `mc:edit="name"` region overrides for one send (Mandrill send-template `template_content`). */
 export const TxTemplateContent = z.array(z.object({ name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), content: z.string().max(512_000) })).max(50);
@@ -124,6 +124,8 @@ export const SendRequest = z.object({
   returnPathDomain: z.string().max(253).optional(),
   /** send-raw: object-storage key of the MIME message relayed as given (headers we own are replaced); rendering only fills the log copy. */
   rawMimeKey: z.string().max(500).optional(),
+  /** send-raw: the caller's own RFC 5322 Message-ID (already validated), kept instead of ours. */
+  messageId: z.string().max(998).optional(),
   /** false = unknown variables render empty instead of blocking the send (required links such as unsubscribe still block). Default strict. */
   strictLiquid: z.boolean().optional(),
   /** The list a campaign send goes to: its default mailer is tried after the request's own route. */
@@ -212,6 +214,8 @@ export const MessageJobDto = z.object({
   scheduledFor: Timestamp.nullable(),
   sentAt: Timestamp.nullable(),
   providerMessageId: z.string().nullable(),
+  /** Email: the RFC 5322 Message-ID header the message went out with (angle brackets included); null before dispatch and for other channels. */
+  messageId: z.string().nullish(),
   subject: z.string().nullable(),
   tags: z.array(z.string()),
   metadata: z.record(z.string(), z.string()).nullable(),
@@ -231,5 +235,7 @@ export const MessageDetailDto = z.object({
   attempts: z.array(MessageAttemptDto),
   events: z.array(MessageEventDto),
   decisionLog: z.array(DecisionEntry),
+  /** "delivered via Hermeticor test mailer" when the message went through the test mailer instead of a connection of yours. */
+  note: z.string().optional(),
 });
 export const RetryOutcome = z.object({ jobId: Id, status: z.string(), at: Timestamp });

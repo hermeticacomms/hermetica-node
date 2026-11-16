@@ -60,6 +60,12 @@ export const WorkspacePatch = z.object({
 export const DevLoginBody = z.object({ email: z.email().max(254), name: z.string().min(1).max(120).optional() });
 export const AuthResult = z.object({ user: UserDto, workspace: WorkspaceDto.nullable(), expiresAt: Timestamp.nullable() });
 export const LogoutResult = z.object({ ok: z.literal(true), /** Atlas end-session URL the browser should visit next (null without Atlas). */ redirectTo: z.string().nullable() });
+/** GET /v1/me/can: would this caller pass a route's auth and scope checks? `path` is the template (`/v1/profiles/{id}/dsar/erase`) or a concrete path. */
+export const MeCanQuery = z.object({ method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']), path: z.string().min(1).max(2000) });
+export const MeCanResult = z.object({
+  allowed: z.boolean(), /** The matched route, e.g. `POST /v1/profiles/:id/dsar/erase`. */ route: z.string(),
+  scopes: z.array(z.string()), missing: z.array(z.string()), auth: z.string(), app: z.string().nullable(),
+});
 export const MeResult = z.object({
   actor: z.object({ type: z.string(), id: z.string(), workspaceId: Id, role: Role.optional(), scopes: z.array(z.string()), /** API key bound to one product: it only sees that app's topics, lists, segments, fields and webhooks. */ app: z.string().nullable().optional() }),
   user: UserDto.nullable(),
@@ -89,7 +95,11 @@ export const ApiKeyCreate = z.object({
   expiresAt: TimestampIn.optional(),
 });
 /** Change a live key's own rate budget; null drops it back to the default limit. */
-export const ApiKeyUpdate = z.object({ rateLimitPerMin: z.number().int().min(1).max(100_000).nullable().optional(), /** Bind to an app slug, or null to unbind (secret keys only). */ app: AppSlug.nullable().optional() });
+export const ApiKeyUpdate = z.object({
+  rateLimitPerMin: z.number().int().min(1).max(100_000).nullable().optional(), /** Bind to an app slug, or null to unbind (secret keys only). */ app: AppSlug.nullable().optional(),
+  /** A future instant, or null = never expires (users only). A key setting it on a key it minted can't go past its own expiry. */
+  expiresAt: TimestampIn.nullable().optional(),
+});
 export const ApiKeyDto = z.object({
   id: Id,
   name: z.string(),
@@ -109,7 +119,12 @@ export const ApiKeyDto = z.object({
   createdBy: Id.nullable().optional(),
   createdAt: Timestamp,
 });
-export const ApiKeyCreated = ApiKeyDto.extend({ plaintext: z.string() });
+export const ApiKeyCreated = ApiKeyDto.extend({
+  /** The key itself, shown once: store it, never log this response. `prefix` is only its first 12 characters. */
+  secret: z.string(),
+  /** @deprecated Same value as `secret`; kept for older clients. */
+  plaintext: z.string().meta({ deprecated: true }),
+});
 
 export const MemberDto = z.object({ userId: Id, email: z.string(), name: z.string(), role: Role, listIds: z.array(z.string()).nullable().optional() });
 export const InviteBody = z.object({ email: z.email().max(254), role: Role });

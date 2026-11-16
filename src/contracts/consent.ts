@@ -4,7 +4,7 @@ import { AppSlug, Channel, DateTimeIn, Id, Purpose, Timestamp, patchOf } from '.
 export const ConsentStatus = z.enum(['granted', 'revoked', 'pending_confirmation']);
 export const LegalBasis = z.enum(['consent', 'legitimate_interest', 'contract', 'other']);
 export type LegalBasis = z.infer<typeof LegalBasis>;
-export const ConsentSource = z.enum(['form', 'import', 'api', 'sms_keyword', 'preference_center', 'admin', 'double_opt_in', 'instagram_dm', 'facebook_dm']);
+export const ConsentSource = z.enum(['form', 'import', 'api', 'sms_keyword', 'preference_center', 'admin', 'double_opt_in', 'instagram_dm', 'facebook_dm', 'cookiemunch']);
 export const RevocationScope = z.enum(['topic', 'channel', 'all']);
 export const SuppressionReason = z.enum(['unsubscribe', 'hard_bounce', 'complaint', 'stop_keyword', 'manual', 'invalid', 'dnc']);
 export const SuppressionScope = z.enum(['global', 'topic', 'purpose']);

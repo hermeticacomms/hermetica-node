@@ -92,6 +92,8 @@ export const ProfileFilterFields = z.object({
   attrValue: z.string().max(500).optional(),
   /** VIP / starred = attribute `vip` is true. */
   vip: z.enum(['true', 'false']).optional(),
+  /** Only profiles this product (app slug) brought in or touched; forced for app-bound keys. */
+  app: z.string().max(64).optional(),
   /** Profiles with a consent state in this status (`none` = no consent record). Narrow with `consentChannel`. */
   consentStatus: z.enum(['granted', 'revoked', 'pending_confirmation', 'none']).optional(),
   consentChannel: Channel.optional(),
