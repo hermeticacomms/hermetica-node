@@ -16,10 +16,21 @@ export const PrivacyLookupBody = z.object(subject).refine(hasSubject, subjectMsg
 /** Cookie Munch's conformance canary answers found as `canary_<token>` with `canary: true`; it is never a real profile. */
 const SubjectId = z.union([Id, z.string().regex(/^canary_[0-9a-z]{8,64}$/)]);
 export const PrivacyLookupDto = z.object({ subjectId: SubjectId.nullable(), status: z.enum(['found', 'no_match']), canary: z.boolean().optional() });
-export const PrivacyRequestBody = z.object({ type: z.enum(['access', 'deletion']), ...subject }).refine(hasSubject, subjectMsg);
+export const PrivacyRequestBody = z.object({
+  type: z.enum(['access', 'deletion']), ...subject,
+  /**
+   * deletion only. `app`: erase one product's data about the person (its events, lists, attributes, messages; the profile goes only when nothing else is left).
+   * `workspace`: erase the person everywhere in the workspace. Default: `app` for an app-bound key, `workspace` otherwise.
+   */
+  scope: z.enum(['app', 'workspace']).optional(),
+  /** With scope app from an unbound key: the app to erase. */
+  app: AppSlug.optional(),
+}).refine(hasSubject, subjectMsg);
 /** `no_match`: nobody in this workspace has that identifier (also the answer to a repeated deletion); it still gets an id to poll. */
 export const PrivacyRequestDto = z.object({
   id: Id, type: z.enum(['access', 'deletion']), status: z.enum(['completed', 'no_match']), subjectId: SubjectId.nullable(), canary: z.boolean().optional(),
+  /** deletion: what was erased (`app` with `app` set, or `workspace`). */
+  scope: z.enum(['app', 'workspace']).optional(), app: z.string().optional(), profileDeleted: z.boolean().optional(),
   result: z.unknown().optional(), tombstones: z.number().optional(), counts: z.record(z.string(), z.record(z.string(), z.number())).optional(),
 });
 /**

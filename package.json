@@ -1,7 +1,7 @@
 {
   "name": "@hermeticacomms/sdk-node",
-  "version": "0.4.2",
-  "description": "Typed Node.js client for the Hermetica API",
+  "version": "0.4.4",
+  "description": "Typed Node.js client for the Hermeticor (Hermetica) API",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -9,6 +9,13 @@
     "url": "git+https://github.com/hermeticacomms/hermetica-node.git"
   },
   "homepage": "https://github.com/hermeticacomms/hermetica-node#readme",
+  "keywords": [
+    "hermeticor",
+    "hermetica",
+    "email",
+    "sms",
+    "outreach"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true
