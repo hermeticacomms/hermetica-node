@@ -105,7 +105,7 @@ export const SendRequest = z.object({
   /** Transactional email to an address not yet on the profile (address-change confirmation). Same suppression gates apply to this address; refused for any other purpose. */
   destinationOverride: z.string().email().max(320).optional(),
   /** Set by requestSend from a restricted API key; dispatch re-applies it so a re-route never leaves the allowed senders. */
-  senderScope: z.object({ connections: z.array(z.string()).optional(), domains: z.array(z.string()).optional() }).optional(),
+  senderScope: z.object({ connections: z.array(z.string()).optional(), domains: z.array(z.string()).optional(), /** Sent by an API key bound to this app (null: an unbound key); app-bound connections of other apps are skipped. */ keyApp: z.string().nullable().optional() }).optional(),
   /** Postcard only: the front/back design and size; postcards carry no template or inline body. */
   postcard: PostcardDesign.optional(),
   /** Transactional (Mandrill) options, see TxSendOptions: CSS inlining, query-string-free click reporting, a visible To list, no stored body copy. */

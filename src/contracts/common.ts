@@ -53,5 +53,5 @@ export type Purpose = z.infer<typeof Purpose>;
 export const Attributes = z.record(z.string().max(128), z.unknown());
 
 export const ErrorBody = z.object({
-  error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }),
+  error: z.object({ code: z.string(), message: z.string(), details: z.record(z.string(), z.unknown()).optional(), /** Same as the x-request-id header: quote it when reporting a problem. */ requestId: z.string().optional() }),
 });

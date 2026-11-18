@@ -99,6 +99,8 @@ export const ApiKeyUpdate = z.object({
   rateLimitPerMin: z.number().int().min(1).max(100_000).nullable().optional(), /** Bind to an app slug, or null to unbind (secret keys only). */ app: AppSlug.nullable().optional(),
   /** A future instant, or null = never expires (users only). A key setting it on a key it minted can't go past its own expiry. */
   expiresAt: TimestampIn.nullable().optional(),
+  /** Narrow a secret key's scopes to this subset of what it can do now (implied scopes included); it then holds exactly these. */
+  scopes: z.array(z.string()).min(1).max(200).optional(),
 });
 export const ApiKeyDto = z.object({
   id: Id,
@@ -106,6 +108,8 @@ export const ApiKeyDto = z.object({
   kind: ApiKeyKind,
   prefix: z.string(),
   scopes: z.array(z.string()),
+  /** What the key can actually do: `scopes` plus any implied for keys made before a scope split. */
+  effectiveScopes: z.array(z.string()),
   allowedOrigins: z.array(z.string()),
   allowedDomains: z.array(z.string()).optional(),
   allowedConnectionIds: z.array(z.string()).optional(),
@@ -124,6 +128,8 @@ export const ApiKeyCreated = ApiKeyDto.extend({
   secret: z.string(),
   /** @deprecated Same value as `secret`; kept for older clients. */
   plaintext: z.string().meta({ deprecated: true }),
+  /** Non-blocking notes, e.g. that `app` was inherited from the key that made it because none was given. */
+  warnings: z.array(z.string()).optional(),
 });
 
 export const MemberDto = z.object({ userId: Id, email: z.string(), name: z.string(), role: Role, listIds: z.array(z.string()).nullable().optional() });

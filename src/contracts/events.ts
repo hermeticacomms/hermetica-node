@@ -46,6 +46,8 @@ export const IngestEvent = z.object({
   currency: z.string().length(3).optional(),
   dedupeKey: z.string().min(1).max(256).optional(),
   profile: EventProfileData.optional(),
+  /** Same as profile's email / phone / externalId, named as on POST /v1/profiles/upsert (merged into profile; give a field in one place only). */
+  identifiers: EventProfile.optional(),
   /** Match the person on this key instead: email, phone, externalId, or a custom field declared unique. */
   correlationKey: z.string().min(1).max(64).optional(),
   correlationValue: z.union([z.string().min(1).max(256), z.number()]).optional(),
@@ -55,7 +57,10 @@ export const IngestEvent = z.object({
 export type IngestEvent = z.infer<typeof IngestEvent>;
 export const IngestEventChecked = IngestEvent
   .refine((e) => e.value === undefined || e.amount === undefined, { message: 'Send value (cents) or amount (decimal), not both', path: ['amount'] })
-  .refine((e) => (e.correlationKey === undefined) === (e.correlationValue === undefined), { message: 'correlationKey and correlationValue go together', path: ['correlationKey'] });
+  .refine((e) => (e.correlationKey === undefined) === (e.correlationValue === undefined), { message: 'correlationKey and correlationValue go together', path: ['correlationKey'] })
+  .refine((e) => !e.identifiers || !e.profile || Object.keys(e.identifiers).every((k) => e.profile![k as keyof typeof e.identifiers] === undefined), { message: 'An identifier is given in both identifiers and profile; give it once', path: ['identifiers'] })
+  // HM-U5: `identifiers` (the upsert name) is folded into `profile`, so everything after parsing reads one place.
+  .transform(({ identifiers, ...e }) => (identifiers ? { ...e, profile: { ...e.profile, ...identifiers } } : e));
 
 /** Batch bodies keep items opaque so one bad event is rejected individually, not the whole request. */
 export const BatchConsent = z.object({ analytics: z.boolean().optional(), marketing: z.boolean().optional() });

@@ -4,6 +4,7 @@ import type {
   ProfileDto, ProfilePage, SegmentDto, SegmentPage, SegmentPreviewBody, SegmentPreviewResult, SendApiBody, SendOutcome, UpdateProfileBody,
   UpdateWebhookEndpoint, UpsertProfileBody, UpsertProfileResult, WebhookDeliveriesQuery, WebhookDeliveryDto, WebhookDeliveryPage,
   WebhookEndpointCreated, WebhookEndpointDto, WebhookEndpointPage,
+  ForgetAppDto,
 } from './contracts/index.ts';
 import { resources } from './resources.ts';
 import { platformResources } from './platform.ts';
@@ -47,6 +48,11 @@ export function createClient(options: ClientOptions) {
       upsert: (body: In<typeof UpsertProfileBody>, o?: RequestOptions) => http<Out<typeof UpsertProfileResult>>('POST', '/v1/profiles/upsert', { body, ...o }),
       update: (id: string, body: In<typeof UpdateProfileBody>) => http<Out<typeof ProfileDto>>('PATCH', `/v1/profiles/${enc(id)}`, { body }),
       delete: (id: string) => http<{ removed: { type: string; value: string }[] }>('DELETE', `/v1/profiles/${enc(id)}`),
+      /** One app forgets its data about a person (account closed there), by your own id: `forgetApp({ externalId })`. Idempotent: nobody found answers found:false. */
+      forgetApp: (who: { externalId: string } | { email: string } | { id: string }, app?: string) => {
+        const [type, value] = 'externalId' in who ? ['external_id', who.externalId] : 'email' in who ? ['email', who.email] : ['id', who.id];
+        return http<Out<typeof ForgetAppDto>>('POST', `/v1/profiles/by/${type}/${enc(value)}/forget-app`, { body: app ? { app } : {} });
+      },
     },
     events: {
       ingest: (body: In<typeof IngestEvent>, o?: RequestOptions) => http<Out<typeof IngestResult>>('POST', '/v1/events', { body, ...o }),

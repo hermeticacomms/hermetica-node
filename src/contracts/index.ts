@@ -6,6 +6,7 @@ export * from './connectors.ts';
 export * from './consent.ts';
 export * from './content.ts';
 export * from './delivery.ts';
+export * from './enterprise-compliance.ts';
 export * from './events.ts';
 export * from './identity.ts';
 export * from './integrations.ts';
