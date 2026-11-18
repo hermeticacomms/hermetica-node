@@ -1,9 +1,9 @@
-# @hermeticacomms/sdk-node
+# @hermeticor/sdk-node
 
-Typed Node.js client for the Hermeticor API (Node 20+). The product is Hermeticor (hermeticor.com); the SDKs, CLI, headers and env vars keep its earlier name Hermetica. `@hermetica/*` and `hermetica` on npm belong to an unrelated company.
+Typed Node.js client for the Hermeticor API (Node 20+). Hermeticor (hermeticor.com) was called Hermetica; headers, env vars and the `hermetica` command keep that name. `@hermeticacomms/*` are the old, deprecated package names, and `@hermetica/*` and `hermetica` on npm belong to an unrelated company.
 
 ```ts
-import { createClient } from '@hermeticacomms/sdk-node';
+import { createClient } from '@hermeticor/sdk-node';
 
 const hm = createClient({ apiKey: process.env.HERMETICA_API_KEY!, baseUrl: 'https://hermeticor.com' });
 await hm.profiles.forgetApp({ externalId: 'user_123' }); // the person left this app
