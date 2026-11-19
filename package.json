@@ -1,6 +1,6 @@
 {
   "name": "@hermeticor/sdk-node",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Typed Node.js client for the Hermeticor (Hermetica) API",
   "license": "MIT",
   "type": "module",
@@ -24,6 +24,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./lite": {
+      "types": "./dist/lite.d.ts",
+      "default": "./dist/lite.js"
     }
   },
   "files": [
@@ -38,12 +42,18 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "zod": "^4.6.7"
+  "peerDependencies": {
+    "zod": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "zod": "^4.6.7"
   }
 }

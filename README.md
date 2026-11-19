@@ -9,8 +9,18 @@ const hm = createClient({ apiKey: process.env.HERMETICA_API_KEY!, baseUrl: 'http
 await hm.profiles.forgetApp({ externalId: 'user_123' }); // the person left this app
 ```
 
+No schema library at all (fetch only, plain types; reads HERMETICA_URL and HERMETICA_API_KEY or HERMETICA_KEY):
+
+```ts
+import { track, forgetApp, sendRaw, identify, verifySignature } from '@hermeticor/sdk-node/lite';
+
+await track({ name: 'signed_up', dedupeKey: `signup-${userId}`, profile: { externalId: userId, email } }); // creates or updates the person too
+```
+
+zod is an optional peer dependency, needed only for the full client's TypeScript types.
+
 Guides: https://hermeticor.com/guides/sdks. API reference: https://hermeticor.com/docs (spec at /openapi.json).
 
-Every non-GET call sends an `Idempotency-Key`. Consent and suppression are enforced by the API; the client cannot bypass them.
+Pass `{ idempotencyKey }` on a write to make it safe to retry (the lite entry adds one to every write). Consent and suppression are enforced by the API; the client cannot bypass them.
 
 Generated from the Hermetica monorepo; open issues here, changes land upstream.
