@@ -42,8 +42,8 @@ const Delivery = {
 export const WebhookSigningSecret = z.string().min(32).max(256).refine((s) => new Set(s).size >= 12, 'Use a random secret: at least 32 characters, at least 12 of them different');
 /** Watchtower's PagerDuty-compatible alert intake (hosted; a self-hosted Watchtower serves the same path on its edge). */
 export const WATCHTOWER_ENQUEUE_URL = 'https://edge.watchtowerops.net/v2/enqueue';
-/** What a Watchtower endpoint is subscribed to unless you pick other topics: connection health (incl. pauses) and sending-domain verification. */
-export const WATCHTOWER_TOPICS = ['connection.health_changed', 'domain.verification_failed', 'domain.verified'];
+/** What a Watchtower endpoint is subscribed to unless you pick other topics: connection health (incl. pauses), sending-domain verification and deliverability recommendations. */
+export const WATCHTOWER_TOPICS = ['connection.health_changed', 'domain.verification_failed', 'domain.verified', 'deliverability.recommendation_opened', 'deliverability.recommendation_resolved', 'workflow.stalled', 'workflow.recovered'];
 /**
  * A target preset. `watchtower`: each delivery is a Watchtower alert event (trigger on trouble, resolve on recovery) authenticated with the
  * project's ingest key (scope `ingest:alerts`), which is kept sealed in place of a signing secret and never returned.

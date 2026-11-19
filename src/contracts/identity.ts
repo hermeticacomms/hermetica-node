@@ -140,6 +140,12 @@ export const NoteBody = z.object({ body: z.string().min(1).max(10_000), kind: No
 export const NoteDto = z.object({ id: Id, profileId: Id, authorId: z.string(), body: z.string(), kind: NoteKind.default('note'), at: Timestamp, updatedAt: Timestamp.nullish() });
 export const NoteParams = z.object({ id: Id, noteId: Id });
 export const NotePage = pageResult(NoteDto);
+
+/** Per-app link on a contact ("Open in Crossly"): one per app, https only. */
+export const ProfileLinkParams = z.object({ id: Id, app: AppSlug });
+export const ProfileLinkBody = z.object({ label: z.string().trim().min(1).max(80), url: z.url().max(2048).refine((u) => u.startsWith('https://'), 'Link URLs must be https') });
+export const ProfileLinkDto = z.object({ app: z.string(), label: z.string(), url: z.string(), updatedAt: Timestamp });
+export const ProfileLinkList = z.object({ items: z.array(ProfileLinkDto) });
 export const ActivityDto = z.object({
   id: Id,
   profileId: Id,

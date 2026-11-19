@@ -1,6 +1,6 @@
 {
   "name": "@hermeticor/sdk-node",
-  "version": "0.4.6",
+  "version": "0.4.9",
   "description": "Typed Node.js client for the Hermeticor (Hermetica) API",
   "license": "MIT",
   "type": "module",

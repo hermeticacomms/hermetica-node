@@ -36,7 +36,7 @@ export const ConsentInputBody = z.object({
   disclosureVersion: z.string().max(64).nullish(),
   ip: z.string().max(64).nullish(),
   userAgent: z.string().max(512).nullish(),
-  proof: z.record(z.string(), z.unknown()).nullish().describe('From an API key, a proof source needs evidence: form → formSubmissionId; double_opt_in / sms_keyword → consentRecordId of that flow'),
+  proof: z.record(z.string(), z.unknown()).nullish().describe('From an API key, a proof source needs evidence: form → formSubmissionId; double_opt_in / sms_keyword / preference_center → consentRecordId of that flow; or form / preference_center with disclosureText, disclosureVersion, ip and userAgent all set'),
   expiresAt: DateTimeIn().nullish(),
   revocationScope: RevocationScope.nullish(),
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Channel, DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
+import { AppSlug, Channel, DateTimeIn, Id, PageQuery, Purpose, Timestamp, pageResult } from './common.ts';
 
 export const ExperimentKind = z.enum(['message_variant', 'path_split', 'holdout', 'send_time']);
 export const ExperimentMethod = z.enum(['bayesian_beta', 'frequentist_ztest']);
@@ -110,8 +110,12 @@ export type FrequencyCapInput = z.infer<typeof FrequencyCapInput>;
 export const SmartSending = z.object({ hours: z.number().int().min(1).max(24 * 14), action: z.enum(['defer', 'skip']).default('skip') });
 export type SmartSending = z.infer<typeof SmartSending>;
 export const FrequencySettingsBody = z.object({
-  scopeType: z.enum(['workspace', 'campaign', 'workflow']).default('workspace'),
-  scopeId: Id.nullish(),
+  /**
+   * `app` caps the sends attributed to one app (app-bound key, `app:<slug>` tag or metadata.app); scopeId is the app slug.
+   * An app cap applies on top of the workspace (or campaign/workflow) cap: both are checked and the stricter one wins. Other apps' sends are unaffected.
+   */
+  scopeType: z.enum(['workspace', 'campaign', 'workflow', 'app']).default('workspace'),
+  scopeId: z.union([Id, AppSlug]).nullish().describe('Campaign or workflow id; the app slug with scopeType app'),
   caps: z.array(FrequencyCapInput).max(20).default([]),
   smartSending: SmartSending.nullish(),
   /**
@@ -119,7 +123,8 @@ export const FrequencySettingsBody = z.object({
    * Workspace row: null or `off` = off. Campaign/workflow override: null = follow the workspace, `off` = no cross-purpose cap for it, a cap = its own.
    */
   crossPurpose: z.union([z.object({ max: z.number().int().min(1).max(1000), windowHours: z.number().int().min(1).max(24 * 30) }), z.literal('off')]).nullish(),
-});
+}).refine((b) => b.scopeType !== 'app' || AppSlug.safeParse(b.scopeId).success, { message: 'scopeType app needs scopeId: the app slug', path: ['scopeId'] })
+  .refine((b) => (b.scopeType !== 'campaign' && b.scopeType !== 'workflow') || !b.scopeId || Id.safeParse(b.scopeId).success, { message: 'scopeId must be the campaign or workflow id', path: ['scopeId'] });
 export const FrequencySettingsDto = Row;
 export const FrequencySettingsList = z.object({ items: z.array(FrequencySettingsDto) });
 

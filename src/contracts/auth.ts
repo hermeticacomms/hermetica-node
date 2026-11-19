@@ -29,6 +29,7 @@ export const WorkspaceDto = z.object({
   campaignNotifyEmails: z.array(z.string()),
   websiteUrl: z.string().nullable().optional(),
   industry: z.string().nullable().optional(),
+  predictedGenderEnabled: z.boolean().optional(),
 });
 export const INDUSTRIES = ['ecommerce', 'saas', 'agency', 'media', 'education', 'nonprofit', 'finance', 'health', 'travel', 'real_estate', 'b2b_services', 'other'] as const;
 export const Currency = z.string().regex(/^[A-Z]{3}$/, 'Use a 3-letter currency code such as USD');
@@ -54,6 +55,8 @@ export const WorkspacePatch = z.object({
   campaignNotifyEmails: z.array(z.email()).max(10).optional(),
   websiteUrl: z.url({ protocol: /^https?$/ }).max(500).nullable().optional(),
   industry: z.enum(INDUSTRIES).nullable().optional(),
+  /** Infer gender from first names (`GET /v1/profiles/{id}/predicted-gender`, segments, templates). Off by default: it is an inference that needs its own lawful basis. */
+  predictedGenderEnabled: z.boolean().optional(),
 });
 
 /** Dev-only sign-in (AUTH_DEV_LOGIN, never production): tests and local dev without Atlas. */
@@ -81,6 +84,8 @@ export const ApiKeyCreate = z.object({
   name: z.string().min(1).max(120),
   kind: ApiKeyKind,
   scopes: z.array(z.string().max(64)).max(64).default([]),
+  /** Secret keys: a named scope set from GET /v1/api-keys/presets (e.g. product-server), added to `scopes`. Unknown names are a 400 listing the valid ones. */
+  preset: z.string().max(64).optional(),
   allowedOrigins: z.array(z.string().max(255)).max(50).optional(),
   /** Secret keys: restrict sends to these from-domains / connection ids. Empty = unrestricted. */
   allowedDomains: z.array(z.string().max(255)).max(50).optional(),

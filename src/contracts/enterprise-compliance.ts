@@ -47,7 +47,7 @@ export const PrivacyRequestStatusDto = z.object({
 export const ForgetAppBody = z.object({ app: AppSlug.optional() });
 export const ForgetAppDto = z.object({
   app: z.string(),
-  /** Rows removed per table (events, list_members, segment_memberships, segment_snapshot_members, form_submissions, campaign_recipients, message_jobs, attributes = attribute keys). */
+  /** Rows removed per table (events, list_members, segment_memberships, segment_snapshot_members, form_submissions, campaign_recipients, message_jobs, journeyEnrollments = enrollments in the app's journeys, attributes = attribute keys). */
   removed: z.record(z.string(), z.number()),
   /** Nothing else was left about the person (no other app's data, no consent or suppression records), so the profile was deleted too. */
   profileDeleted: z.boolean(),
